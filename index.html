@@ -24,7 +24,7 @@
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#16a34a">
     <script>
-        if ('serviceWorker' in navigator) {
+        if ('serviceWorker' in navigator && (window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('sw.js').catch(err => {
                     console.log('ServiceWorker registration failed: ', err);
@@ -86,9 +86,10 @@ input:checked ~ .dot {
     opacity: 0;
     transition: opacity 0.2s ease-in-out;
 }
-.screen.active {
-    display: flex;
-    opacity: 1;
+.screen.active,
+.screen[style*="display: flex"] {
+    display: flex !important;
+    opacity: 1 !important;
 }
 
 /* Input file custom */
@@ -261,7 +262,7 @@ input[type="file"]::file-selector-button:hover {
     <div id="app-container" class="w-full h-full bg-bg relative shadow-2xl flex flex-col overflow-hidden transition-all duration-300">
         
         <!-- ==================== SCREEN 1: LOGIN ==================== -->
-        <div id="screen-login" class="screen active bg-white h-full flex flex-col relative max-w-[480px] mx-auto w-full">
+        <div id="screen-login" class="screen active bg-white h-full flex flex-col relative max-w-[480px] mx-auto w-full" style="display: flex; opacity: 1;">
             <div class="bg-primary rounded-b-[40px] pt-16 pb-12 px-6 text-center text-white relative overflow-hidden shadow-lg">
                 <div class="absolute inset-0 opacity-20 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]"></div>
                 <div class="relative z-10 flex flex-col items-center">
@@ -613,17 +614,68 @@ input[type="file"]::file-selector-button:hover {
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
     <script>
         // GANTI KONFIGURASI INI DENGAN FIREBASE PROJECT ANDA
-        const firebaseConfig = {
-            apiKey: "AIzaSyAXTS36pTOIRVXAJ6PMkqbuUihMNy_49fE",
-            authDomain: "absenguruonline-bada0.firebaseapp.com",
-            projectId: "absenguruonline-bada0",
-            storageBucket: "absenguruonline-bada0.firebasestorage.app",
-            messagingSenderId: "399770094333",
-            appId: "1:399770094333:web:3d69c71f05fa47cd660c94"
+        var firebaseConfig = {
+            apiKey: "AIzaSyDL2IQTkYxcRl4XmEoOgf76CVVbj9qr6z0",
+            authDomain: "absensiguru-268d9.firebaseapp.com",
+            projectId: "absensiguru-268d9",
+            storageBucket: "absensiguru-268d9.firebasestorage.app",
+            messagingSenderId: "1014685328974",
+            appId: "1:1014685328974:web:031c9d916a8b3605ca051f"
         };
-        firebase.initializeApp(firebaseConfig);
-        const db = firebase.firestore();
-        const APP_STORAGE_KEY = 'absenguru_app_data_' + (firebaseConfig.projectId || 'default');
+        var db = null;
+        var APP_STORAGE_KEY = 'absenguru_app_data_' + (firebaseConfig.projectId || 'default');
+        try {
+            if (typeof firebase !== 'undefined' && typeof firebase.initializeApp === 'function') {
+                firebase.initializeApp(firebaseConfig);
+                if (typeof firebase.firestore === 'function') {
+                    db = firebase.firestore();
+                }
+            }
+        } catch (e) {
+            console.warn("Firebase offline/local fallback:", e);
+        }
+
+        // Wrapper aman untuk localStorage (mencegah SecurityError pada protocol file:/// di Firefox / private browsing)
+        var safeStorage = {
+            _mem: {},
+            getItem: function(key) {
+                try {
+                    if (typeof window !== 'undefined' && window.localStorage) {
+                        return window.localStorage.getItem(key);
+                    }
+                } catch(e) {}
+                return (key in this._mem) ? this._mem[key] : null;
+            },
+            setItem: function(key, val) {
+                try {
+                    if (typeof window !== 'undefined' && window.localStorage) {
+                        window.localStorage.setItem(key, val);
+                    }
+                } catch(e) {}
+                this._mem[key] = String(val);
+            },
+            removeItem: function(key) {
+                try {
+                    if (typeof window !== 'undefined' && window.localStorage) {
+                        window.localStorage.removeItem(key);
+                    }
+                } catch(e) {}
+                delete this._mem[key];
+            }
+        };
+
+        // Fallback jika window.localStorage diblokir browser
+        try {
+            window.localStorage.getItem('__test__');
+        } catch(e) {
+            try {
+                Object.defineProperty(window, 'localStorage', {
+                    value: safeStorage,
+                    configurable: true,
+                    writable: true
+                });
+            } catch(err) {}
+        }
     </script>
 
     <!-- Script that handles templates, routing, and logic -->
@@ -711,15 +763,34 @@ var app = {
     // ==========================================
     init() {
         // 1. Memuat dari lokal (terisolasi per projectId)
-        let savedData = localStorage.getItem(APP_STORAGE_KEY);
-        if (!savedData) {
-            savedData = localStorage.getItem('absenguru_app_data');
-        }
+        let savedData = null;
+        try {
+            savedData = safeStorage.getItem(APP_STORAGE_KEY) || safeStorage.getItem('absenguru_app_data');
+        } catch (e) {}
+
         if (savedData) {
             try {
-                this.mockData = JSON.parse(savedData);
+                const parsed = JSON.parse(savedData);
+                if (parsed && typeof parsed === 'object') {
+                    this.mockData = {
+                        ...this.mockData,
+                        ...parsed,
+                        adminProfile: {
+                            ...(this.mockData.adminProfile || {}),
+                            ...(parsed.adminProfile || {})
+                        },
+                        schoolSettings: {
+                            ...(this.mockData.schoolSettings || {}),
+                            ...(parsed.schoolSettings || {})
+                        },
+                        lokasiDanJamKerja: {
+                            ...(this.mockData.lokasiDanJamKerja || {}),
+                            ...(parsed.lokasiDanJamKerja || {})
+                        }
+                    };
+                }
             } catch (e) {
-                console.error('Gagal memuat data lokal', e);
+                console.warn('Gagal memuat data lokal', e);
             }
         }
         if (this.mockData.lokasiDanJamKerja) {
@@ -734,13 +805,14 @@ var app = {
         }
 
         // 2. Mendengarkan perubahan dari Firebase (Sync Real-time)
-        try {
-            db.collection('appData').doc('mainState').onSnapshot((doc) => {
-                if (doc.exists) {
-                    const fbData = doc.data();
-                    // Cegah loop tak berujung, update lokal jika Firebase punya versi berbeda
-                    if (JSON.stringify(fbData) !== JSON.stringify(this.mockData)) {
-                        const localSchool = this.mockData.schoolSettings || {};
+        if (typeof db !== 'undefined' && db && typeof db.collection === 'function') {
+            try {
+                db.collection('appData').doc('mainState').onSnapshot((doc) => {
+                    if (doc.exists) {
+                        const fbData = doc.data();
+                        // Cegah loop tak berujung, update lokal jika Firebase punya versi berbeda
+                        if (JSON.stringify(fbData) !== JSON.stringify(this.mockData)) {
+                            const localSchool = this.mockData.schoolSettings || {};
                         const localAdmin = this.mockData.adminProfile || {};
                         const localLokasi = this.mockData.lokasiDanJamKerja || {};
                         const localJurnal = this.mockData.jurnal || [];
@@ -1028,86 +1100,109 @@ var app = {
             });
 
         } catch (e) {
-            console.error("Firebase tidak terinisialisasi dengan benar", e);
+            console.warn("Firebase tidak terhubung / berjalan offline:", e);
         }
+        } // akhir pengecekan db
         
         // 3. Auto-save perubahan dari sisi pengguna ke Firebase
         let lastSavedDataString = JSON.stringify(this.mockData);
         setInterval(() => {
-            const currentDataString = JSON.stringify(this.mockData);
-            
-            // Simpan ke lokal
-            if (currentDataString !== lastSavedDataString) {
-                localStorage.setItem(APP_STORAGE_KEY, currentDataString);
+            try {
+                const currentDataString = JSON.stringify(this.mockData);
                 
-                // Hapus data yang sudah memiliki koleksi sendiri agar tidak memperbesar mainState
-                let dataToSave = JSON.parse(currentDataString);
-                delete dataToSave.riwayat;
-                delete dataToSave.riwayatLamaMainState;
-                delete dataToSave.dataGuru;
-                delete dataToSave.dataGuruLamaMainState;
-                delete dataToSave.schoolSettings;
-                
-                // TAHAP 3: Hapus data yang sudah memiliki koleksi sendiri
-                delete dataToSave.izinAdmin;
-                delete dataToSave.izinLamaMainState;
-                delete dataToSave.izin;
-                delete dataToSave.jurnal;
-                delete dataToSave.jurnalLamaMainState;
-                delete dataToSave.slipGaji;
-                delete dataToSave.slipLamaMainState;
+                // Simpan ke lokal
+                if (currentDataString !== lastSavedDataString) {
+                    safeStorage.setItem(APP_STORAGE_KEY, currentDataString);
+                    
+                    // Hapus data yang sudah memiliki koleksi sendiri agar tidak memperbesar mainState
+                    let dataToSave = JSON.parse(currentDataString);
+                    delete dataToSave.riwayat;
+                    delete dataToSave.riwayatLamaMainState;
+                    delete dataToSave.dataGuru;
+                    delete dataToSave.dataGuruLamaMainState;
+                    delete dataToSave.schoolSettings;
+                    
+                    // TAHAP 3: Hapus data yang sudah memiliki koleksi sendiri
+                    delete dataToSave.izinAdmin;
+                    delete dataToSave.izinLamaMainState;
+                    delete dataToSave.izin;
+                    delete dataToSave.jurnal;
+                    delete dataToSave.jurnalLamaMainState;
+                    delete dataToSave.slipGaji;
+                    delete dataToSave.slipLamaMainState;
 
-                // Simpan ke Firebase hanya jika ada perubahan (Dan hanya dilakukan oleh Admin)
-                // Ini mencegah masalah contention (antrean) ketika ratusan guru absen bersamaan
-                const userInfo = JSON.parse(localStorage.getItem('user_info') || '{}');
-                if (userInfo.role && userInfo.role.toUpperCase() === 'ADMIN') {
-                    try {
-                        if (typeof db !== 'undefined') {
-                            db.collection('appData').doc('mainState').set(dataToSave, { merge: true })
-                                .catch(e => console.error("Gagal simpan ke Firebase", e));
-                        }
-                    } catch (e) {}
+                    // Simpan ke Firebase hanya jika ada perubahan (Dan hanya dilakukan oleh Admin)
+                    const userInfo = JSON.parse(safeStorage.getItem('user_info') || '{}');
+                    if (userInfo.role && userInfo.role.toUpperCase() === 'ADMIN') {
+                        try {
+                            if (typeof db !== 'undefined' && db && typeof db.collection === 'function') {
+                                db.collection('appData').doc('mainState').set(dataToSave, { merge: true })
+                                    .catch(e => console.warn("Sync Firebase warning:", e));
+                            }
+                        } catch (e) {}
+                    }
+                    
+                    lastSavedDataString = currentDataString;
                 }
-                
-                lastSavedDataString = currentDataString;
-            }
+            } catch(e) {}
         }, 2000);
 
-        this.injectTemplates();
-        if (typeof this.applySchoolBrand === 'function') {
-            this.applySchoolBrand();
-        }
-        if (typeof this.renderPengaturanLokasi === 'function') {
-            this.renderPengaturanLokasi();
+        try {
+            this.injectTemplates();
+        } catch(e) {
+            console.error('Error in injectTemplates:', e);
         }
 
-        this.autoGenerateAlpa();
+        try {
+            if (typeof this.applySchoolBrand === 'function') {
+                this.applySchoolBrand();
+            }
+        } catch(e) {}
+
+        try {
+            if (typeof this.renderPengaturanLokasi === 'function') {
+                this.renderPengaturanLokasi();
+            }
+        } catch(e) {}
+
+        try {
+            this.autoGenerateAlpa();
+        } catch(e) {
+            console.warn('Alpa check warning:', e);
+        }
 
         // Periodik cek jam pulang untuk alpa otomatis setiap 60 detik
         setInterval(() => {
-            if (this.mockData && this.mockData.dataGuru && this.mockData.dataGuru.length > 0) {
-                const changed = this.autoGenerateAlpa();
-                if (changed && this.state) {
-                    if (this.state.currentScreen === 'admin-dashboard' && typeof this.loadDashboardAdmin === 'function') this.loadDashboardAdmin();
-                    else if (this.state.currentScreen === 'guru-dashboard' && typeof this.loadDashboardGuruData === 'function' && this.state.currentUser) this.loadDashboardGuruData(this.state.currentUser);
-                    else if (this.state.currentScreen === 'admin-rekap' && typeof this.loadRekapAdmin === 'function') this.loadRekapAdmin();
-                    else if (this.state.currentScreen === 'admin-riwayat' && typeof this.loadRiwayatAdmin === 'function') this.loadRiwayatAdmin();
-                    else if (this.state.currentScreen === 'guru-riwayat' && typeof this.loadRiwayatGuru === 'function') this.loadRiwayatGuru();
+            try {
+                if (this.mockData && this.mockData.dataGuru && this.mockData.dataGuru.length > 0) {
+                    const changed = this.autoGenerateAlpa();
+                    if (changed && this.state) {
+                        if (this.state.currentScreen === 'admin-dashboard' && typeof this.loadDashboardAdmin === 'function') this.loadDashboardAdmin();
+                        else if (this.state.currentScreen === 'guru-dashboard' && typeof this.loadDashboardGuruData === 'function' && this.state.currentUser) this.loadDashboardGuruData(this.state.currentUser);
+                        else if (this.state.currentScreen === 'admin-rekap' && typeof this.loadRekapAdmin === 'function') this.loadRekapAdmin();
+                        else if (this.state.currentScreen === 'admin-riwayat' && typeof this.loadRiwayatAdmin === 'function') this.loadRiwayatAdmin();
+                        else if (this.state.currentScreen === 'guru-riwayat' && typeof this.loadRiwayatGuru === 'function') this.loadRiwayatGuru();
+                    }
                 }
-            }
+            } catch(e) {}
         }, 60000);
 
-        const token = localStorage.getItem('session_token');
-        const userStr = localStorage.getItem('user_info');
-        if (token && userStr) {
-            const user = JSON.parse(userStr);
-            this.state.currentUser = user;
-            if (user.role === 'ADMIN') {
-                this.navigate('admin-dashboard');
+        try {
+            const token = safeStorage.getItem('session_token');
+            const userStr = safeStorage.getItem('user_info');
+            if (token && userStr) {
+                const user = JSON.parse(userStr);
+                this.state.currentUser = user;
+                if (user && user.role === 'ADMIN') {
+                    this.navigate('admin-dashboard');
+                } else {
+                    this.navigate('guru-dashboard');
+                }
             } else {
-                this.navigate('guru-dashboard');
+                this.navigate('login');
             }
-        } else {
+        } catch(e) {
+            console.warn('Session check error, defaulting to login screen:', e);
             this.navigate('login');
         }
     },
@@ -1358,57 +1453,67 @@ var app = {
     navigate(screenId) {
         // Proteksi route (Frontend Check)
         if (screenId !== 'login') {
-            const token = localStorage.getItem('session_token');
-            const userStr = localStorage.getItem('user_info');
+            const token = safeStorage.getItem('session_token');
+            const userStr = safeStorage.getItem('user_info');
             
             if (!token || !userStr) {
                 screenId = 'login'; // Paksa ke login jika belum ada session
                 this.showToast('Silakan login terlebih dahulu', 'warning', 'text-yellow-400');
             } else {
-                const user = JSON.parse(userStr);
+                let user;
+                try {
+                    user = JSON.parse(userStr);
+                } catch(e) {
+                    user = { role: 'GURU' };
+                }
+
                 // Cegah Guru mengakses Admin
                 if (screenId.startsWith('admin') && user.role !== 'ADMIN') {
                     screenId = 'guru-dashboard';
                     this.showToast('Akses ditolak: Anda bukan Admin', 'error', 'text-red-400');
                 }
                 
-                if (screenId === 'guru-dashboard' || screenId === 'guru-riwayat' || screenId === 'admin-dashboard' || screenId === 'admin-rekap' || screenId === 'admin-riwayat') {
-                    if (typeof this.autoGenerateAlpa === 'function') this.autoGenerateAlpa();
-                }
+                try {
+                    if (screenId === 'guru-dashboard' || screenId === 'guru-riwayat' || screenId === 'admin-dashboard' || screenId === 'admin-rekap' || screenId === 'admin-riwayat') {
+                        if (typeof this.autoGenerateAlpa === 'function') this.autoGenerateAlpa();
+                    }
 
-                if (screenId === 'guru-dashboard') {
-                    this.loadDashboardGuruData(user);
-                } else if (screenId === 'guru-riwayat') {
-                    this.loadRiwayatGuru();
-                } else if (screenId === 'guru-izin') {
-                    this.loadIzinGuru();
-                } else if (screenId === 'admin-dashboard') {
-                    this.loadDashboardAdmin();
-                } else if (screenId === 'admin-rekap') {
-                    this.loadRekapAdmin();
-                } else if (screenId === 'admin-riwayat') {
-                    this.loadRiwayatAdmin();
-                } else if (screenId === 'admin-izin') {
-                    this.loadIzinAdmin();
-                } else if (screenId === 'guru-jurnal') {
-                    this.loadJurnalGuru();
-                } else if (screenId === 'admin-jurnal') {
-                    this.loadJurnalAdmin();
-                } else if (screenId === 'admin-guru') {
-                    this.loadDataGuru();
-                } else if (screenId === 'guru-slip-gaji') {
-                    this.loadSlipGuru();
-                } else if (screenId === 'admin-upload-slip') {
-                    this.loadSlipAdmin();
-                } else if (screenId === 'admin-lokasi') {
-                    this.renderPengaturanLokasi();
-                    this.initLokasiMap();
-                } else if (screenId === 'admin-pengaturan') {
-                    this.renderPengaturan();
-                }
+                    if (screenId === 'guru-dashboard') {
+                        this.loadDashboardGuruData(user);
+                    } else if (screenId === 'guru-riwayat') {
+                        this.loadRiwayatGuru();
+                    } else if (screenId === 'guru-izin') {
+                        this.loadIzinGuru();
+                    } else if (screenId === 'admin-dashboard') {
+                        this.loadDashboardAdmin();
+                    } else if (screenId === 'admin-rekap') {
+                        this.loadRekapAdmin();
+                    } else if (screenId === 'admin-riwayat') {
+                        this.loadRiwayatAdmin();
+                    } else if (screenId === 'admin-izin') {
+                        this.loadIzinAdmin();
+                    } else if (screenId === 'guru-jurnal') {
+                        this.loadJurnalGuru();
+                    } else if (screenId === 'admin-jurnal') {
+                        this.loadJurnalAdmin();
+                    } else if (screenId === 'admin-guru') {
+                        this.loadDataGuru();
+                    } else if (screenId === 'guru-slip-gaji') {
+                        this.loadSlipGuru();
+                    } else if (screenId === 'admin-upload-slip') {
+                        this.loadSlipAdmin();
+                    } else if (screenId === 'admin-lokasi') {
+                        this.renderPengaturanLokasi();
+                        this.initLokasiMap();
+                    } else if (screenId === 'admin-pengaturan') {
+                        this.renderPengaturan();
+                    }
 
-                if (screenId !== 'guru-presensi' && this.matikanKamera) {
-                    this.matikanKamera();
+                    if (screenId !== 'guru-presensi' && this.matikanKamera) {
+                        this.matikanKamera();
+                    }
+                } catch (e) {
+                    console.warn(`Peringatan muat data screen ${screenId}:`, e);
                 }
             }
         }
@@ -1434,8 +1539,7 @@ var app = {
         const target = document.getElementById(`screen-${screenId}`);
         if(target) {
             target.style.display = 'flex';
-            // small delay for transition
-            setTimeout(() => target.classList.add('active'), 10);
+            target.classList.add('active');
         }
         
         this.state.currentScreen = screenId;
@@ -1509,8 +1613,8 @@ var app = {
             
             if(res.success) {
                 // Simpan session info di localStorage
-                localStorage.setItem('session_token', res.token);
-                localStorage.setItem('user_info', JSON.stringify(res.user));
+                safeStorage.setItem('session_token', res.token);
+                safeStorage.setItem('user_info', JSON.stringify(res.user));
                 this.state.currentUser = res.user;
                 
                 this.showToast('Login berhasil', 'check_circle', 'text-green-400');
@@ -1581,11 +1685,11 @@ var app = {
     },
 
     logout() {
-        const token = localStorage.getItem('session_token');
+        const token = safeStorage.getItem('session_token');
         
         const finishLogout = () => {
-            localStorage.removeItem('session_token');
-            localStorage.removeItem('user_info');
+            safeStorage.removeItem('session_token');
+            safeStorage.removeItem('user_info');
             this.state.currentUser = null;
             this.navigate('login');
             this.showToast('Berhasil logout', 'info', 'text-blue-400');
@@ -6570,7 +6674,12 @@ var app = {
             </div>
             `;
         },
-        adminTopbar: (title) => `
+        adminTopbar: (title) => {
+            const prof = (app && app.mockData && app.mockData.adminProfile) ? app.mockData.adminProfile : {};
+            const foto = prof.fotoUrl || 'https://ui-avatars.com/api/?name=Admin&background=15803d&color=fff';
+            const nama = prof.nama || 'Administrator';
+            const roleText = prof.role === 'ADMIN' ? 'Administrator' : (prof.role || 'Administrator');
+            return `
             <div class="bg-white h-16 border-b border-gray-200 flex items-center justify-between px-6 shrink-0">
                 <div class="flex items-center gap-4">
                     <span class="material-icons-round text-gray-500 cursor-pointer lg:hidden" onclick="app.toggleSidebar()">menu</span>
@@ -6582,15 +6691,16 @@ var app = {
                         <span class="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full"></span>
                     </div>
                     <div class="flex items-center gap-3 border-l border-gray-200 pl-4">
-                        <img src="${app.mockData.adminProfile.fotoUrl}" class="w-8 h-8 rounded-full object-cover admin-topbar-avatar">
+                        <img src="${foto}" class="w-8 h-8 rounded-full object-cover admin-topbar-avatar">
                         <div class="hidden md:block">
-                            <p class="text-sm font-semibold text-gray-700 admin-topbar-name">${app.mockData.adminProfile.nama}</p>
-                            <p class="text-xs text-gray-500">${app.mockData.adminProfile.role === 'ADMIN' ? 'Administrator' : app.mockData.adminProfile.role}</p>
+                            <p class="text-sm font-semibold text-gray-700 admin-topbar-name">${nama}</p>
+                            <p class="text-xs text-gray-500">${roleText}</p>
                         </div>
                     </div>
                 </div>
             </div>
-        `,
+            `;
+        },
 
         adminDashboard: function() { return `
             <div id="screen-admin-dashboard" class="screen h-full w-full bg-gray-50 flex-row hidden">
