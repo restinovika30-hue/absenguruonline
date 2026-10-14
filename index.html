@@ -614,12 +614,12 @@ input[type="file"]::file-selector-button:hover {
     <script>
         // GANTI KONFIGURASI INI DENGAN FIREBASE PROJECT ANDA
         const firebaseConfig = {
-            apiKey: "AIzaSyAXTS36pTOIRVXAJ6PMkqbuUihMNy_49fE",
-            authDomain: "absenguruonline-bada0.firebaseapp.com",
-            projectId: "absenguruonline-bada0",
-            storageBucket: "absenguruonline-bada0.firebasestorage.app",
-            messagingSenderId: "399770094333",
-            appId: "1:399770094333:web:3d69c71f05fa47cd660c94"
+            apiKey: "AIzaSyDL2IQTkYxcRl4XmEoOgf76CVVbj9qr6z0",
+            authDomain: "absensiguru-268d9.firebaseapp.com",
+            projectId: "absensiguru-268d9",
+            storageBucket: "absensiguru-268d9.firebasestorage.app",
+            messagingSenderId: "1014685328974",
+            appId: "1:1014685328974:web:031c9d916a8b3605ca051f"
         };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
@@ -872,6 +872,11 @@ var app = {
                 
                 // Simpan ke lokal agar tetap responsif saat direfresh
                 localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
+
+                // Evaluasi alpa jika ada guru aktif yang belum presensi
+                if (typeof this.autoGenerateAlpa === 'function') {
+                    this.autoGenerateAlpa();
+                }
                 
                 // Refresh tampilan jika admin sedang membuka halaman rekap
                 if (this.state) {
@@ -913,6 +918,10 @@ var app = {
                 try {
                     localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
                 } catch(e) {}
+
+                if (typeof this.autoGenerateAlpa === 'function') {
+                    this.autoGenerateAlpa();
+                }
                 
                 if (this.state && this.state.currentScreen === 'admin-guru' && typeof this.renderDataGuru === 'function') {
                     this.renderDataGuru();
@@ -927,8 +936,18 @@ var app = {
                     if (typeof this.applySchoolBrand === 'function') {
                         this.applySchoolBrand();
                     }
+                    if (typeof this.autoGenerateAlpa === 'function') {
+                        this.autoGenerateAlpa();
+                    }
                     if (this.state && this.state.currentScreen === 'admin-pengaturan' && typeof this.renderPengaturan === 'function') {
                         this.renderPengaturan();
+                    }
+                    if (this.state) {
+                        if (this.state.currentScreen === 'admin-dashboard' && typeof this.loadDashboardAdmin === 'function') this.loadDashboardAdmin();
+                        if (this.state.currentScreen === 'admin-rekap' && typeof this.loadRekapAdmin === 'function') this.loadRekapAdmin();
+                        if (this.state.currentScreen === 'admin-riwayat' && typeof this.loadRiwayatAdmin === 'function') this.loadRiwayatAdmin();
+                        if (this.state.currentScreen === 'guru-riwayat' && typeof this.loadRiwayatGuru === 'function') this.loadRiwayatGuru();
+                        if (this.state.currentScreen === 'guru-dashboard' && typeof this.loadDashboardGuruData === 'function' && this.state.currentUser) this.loadDashboardGuruData(this.state.currentUser);
                     }
                 }
             });
@@ -1064,6 +1083,20 @@ var app = {
 
         this.autoGenerateAlpa();
 
+        // Periodik cek jam pulang untuk alpa otomatis setiap 60 detik
+        setInterval(() => {
+            if (this.mockData && this.mockData.dataGuru && this.mockData.dataGuru.length > 0) {
+                const changed = this.autoGenerateAlpa();
+                if (changed && this.state) {
+                    if (this.state.currentScreen === 'admin-dashboard' && typeof this.loadDashboardAdmin === 'function') this.loadDashboardAdmin();
+                    else if (this.state.currentScreen === 'guru-dashboard' && typeof this.loadDashboardGuruData === 'function' && this.state.currentUser) this.loadDashboardGuruData(this.state.currentUser);
+                    else if (this.state.currentScreen === 'admin-rekap' && typeof this.loadRekapAdmin === 'function') this.loadRekapAdmin();
+                    else if (this.state.currentScreen === 'admin-riwayat' && typeof this.loadRiwayatAdmin === 'function') this.loadRiwayatAdmin();
+                    else if (this.state.currentScreen === 'guru-riwayat' && typeof this.loadRiwayatGuru === 'function') this.loadRiwayatGuru();
+                }
+            }
+        }, 60000);
+
         const token = localStorage.getItem('session_token');
         const userStr = localStorage.getItem('user_info');
         if (token && userStr) {
@@ -1080,70 +1113,202 @@ var app = {
     },
 
     autoGenerateAlpa() {
-        if (!this.mockData || !this.mockData.dataGuru || !this.mockData.riwayat) return;
+        if (!this.mockData || !this.mockData.dataGuru || !this.mockData.riwayat) return false;
 
         const now = new Date();
         const year = now.getFullYear();
         const month = now.getMonth();
         const todayDate = now.getDate();
+        const currentTotalMinutes = (now.getHours() * 60) + now.getMinutes();
         
-        let hasChanges = false;
-        
-        // Cek dari tanggal 1 sampai H-1 (kemarin) di bulan ini
-        for (let d = 1; d < todayDate; d++) {
-            const checkDate = new Date(year, month, d);
+        const schoolSettings = this.mockData.schoolSettings || {};
+        const rawHariLibur = schoolSettings.hariLibur || [];
+        const sabtuLibur = !!schoolSettings.sabtuLibur;
+
+        // Helper untuk ekstrak string tanggal 'DD/MM/YYYY'
+        const getLiburDateStr = (item) => {
+            if (!item) return '';
+            if (typeof item === 'string') return item;
+            return item.tanggal || '';
+        };
+        const listTglLibur = rawHariLibur.map(getLiburDateStr).filter(Boolean);
+
+        // Helper cek apakah suatu tanggal adalah hari libur (Minggu, Sabtu jika sabtuLibur, atau tanggal merah)
+        const isTanggalLibur = (checkDate, tglString) => {
             const dayOfWeek = checkDate.getDay();
-            
-            // Hari Minggu (0) libur, skip pembuatan alpa.
-            if (dayOfWeek === 0) continue;
+            if (dayOfWeek === 0) return true; // Minggu selalu libur
+            if (dayOfWeek === 6 && sabtuLibur) return true; // Sabtu libur jika diaktifkan
+            if (listTglLibur.includes(tglString)) return true; // Tanggal merah dari pengaturan
+            return false;
+        };
 
-            const tglString = `${d.toString().padStart(2, '0')}/${(month+1).toString().padStart(2, '0')}/${year}`;
+        let hasChanges = false;
+        const alpaDocsToSave = [];
+        const alpaDocsToDelete = [];
 
-            // Ambil daftar tanggal merah dari pengaturan (format: ['17/08/2026'])
-            const hariLibur = (this.mockData.schoolSettings && this.mockData.schoolSettings.hariLibur) || [];
-            
-            // Jika tanggal tersebut tercatat sebagai tanggal merah/libur, hapus ALPA sistem jika sempat tercatat sebelumnya, lalu skip
-            if (hariLibur.includes(tglString)) {
-                const prevCount = this.mockData.riwayat.length;
-                this.mockData.riwayat = this.mockData.riwayat.filter(r => 
-                    !(r.tanggal === tglString && r.status === 'ALPA' && (r.keterangan || '').includes('Sistem'))
-                );
-                if (this.mockData.riwayat.length !== prevCount) {
-                    hasChanges = true;
+        // 1. Bersihkan ALPA otomatis jika tanggal tersebut kini menjadi Hari Libur / Tanggal Merah
+        const riwayatSebelum = this.mockData.riwayat.length;
+        const riwayatDibersihkan = [];
+        this.mockData.riwayat.forEach(r => {
+            if ((r.status || '').toUpperCase() === 'ALPA') {
+                const parts = (r.tanggal || '').split('/');
+                if (parts.length === 3) {
+                    const d = parseInt(parts[0], 10);
+                    const m = parseInt(parts[1], 10) - 1;
+                    const y = parseInt(parts[2], 10);
+                    const dateObj = new Date(y, m, d);
+                    if (isTanggalLibur(dateObj, r.tanggal)) {
+                        hasChanges = true;
+                        const docId = `${y}${String(m + 1).padStart(2, '0')}${String(d).padStart(2, '0')}_${r.nip}`;
+                        alpaDocsToDelete.push(docId);
+                        return; // Jangan masukkan ke riwayatDibersihkan
+                    }
                 }
-                continue;
+            }
+            riwayatDibersihkan.push(r);
+        });
+        if (riwayatDibersihkan.length !== riwayatSebelum) {
+            this.mockData.riwayat = riwayatDibersihkan;
+        }
+
+        // Ambil data izin yang sudah disetujui untuk mengecek izin guru
+        const izinAdmin = this.mockData.izinAdmin || [];
+        const izinDisetujui = izinAdmin.filter(i => (i.status || '').toUpperCase() === 'DISETUJUI');
+
+        const isGuruAdaIzin = (guru, checkDate) => {
+            return izinDisetujui.some(i => {
+                const match = (i.nip === guru.username || i.nip === guru.nip || (guru.nama && i.nama === guru.nama));
+                if (!match) return false;
+                if (!i.tglMulai || !i.tglSelesai) return false;
+                const start = new Date(i.tglMulai);
+                const end = new Date(i.tglSelesai);
+                const target = new Date(checkDate.getFullYear(), checkDate.getMonth(), checkDate.getDate());
+                const s = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+                const e = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+                return target >= s && target <= e;
+            });
+        };
+
+        const cfgLokasi = this.mockData.lokasiDanJamKerja || {};
+        const cfgJk = cfgLokasi.jamKerja || {};
+
+        // Helper untuk mendapatkan jam pulang shift guru pada hari tertentu
+        const getBatasMenitPulang = (guru, dayOfWeek) => {
+            const shiftGuru = guru.shift || 'Pagi';
+            const shiftCfg = shiftGuru === 'Siang' ? (cfgJk.siang || {}) : (cfgJk.pagi || {});
+            let jamPulangStr = (shiftCfg.seninKamis && shiftCfg.seninKamis.pulang) || (shiftGuru === 'Siang' ? '17:00' : '12:00');
+            
+            if (dayOfWeek === 5) { // Jumat
+                if (shiftCfg.jumat && shiftCfg.jumat.pulang) jamPulangStr = shiftCfg.jumat.pulang;
+            } else if (dayOfWeek === 6) { // Sabtu
+                if (shiftCfg.sabtu && shiftCfg.sabtu.pulang) jamPulangStr = shiftCfg.sabtu.pulang;
+            } else {
+                if (shiftCfg.seninKamis && shiftCfg.seninKamis.pulang) jamPulangStr = shiftCfg.seninKamis.pulang;
             }
 
-            this.mockData.dataGuru.forEach(guru => {
-                // Hanya proses guru yang aktif
-                if (guru.statusAkun !== 'AKTIF' && guru.statusAkun !== 'Aktif') return;
-                
+            const parts = jamPulangStr.split(':');
+            const jam = parseInt(parts[0], 10) || 12;
+            const mnt = parseInt(parts[1], 10) || 0;
+            return (jam * 60) + mnt;
+        };
+
+        // 2. Evaluasi hari di bulan berjalan dari tanggal 1 s.d. hari ini (todayDate)
+        for (let d = 1; d <= todayDate; d++) {
+            const checkDate = new Date(year, month, d);
+            const dayOfWeek = checkDate.getDay();
+            const tglString = `${d.toString().padStart(2, '0')}/${(month+1).toString().padStart(2, '0')}/${year}`;
+
+            // Jika hari libur, abaikan
+            if (isTanggalLibur(checkDate, tglString)) continue;
+
+            const isToday = (d === todayDate);
+
+            // Filter guru aktif
+            const guruAktif = this.mockData.dataGuru.filter(guru => {
+                const st = (guru.statusAkun || '').toUpperCase();
+                return st === 'AKTIF' || !guru.statusAkun;
+            });
+
+            guruAktif.forEach(guru => {
+                // Untuk HARI INI (todayDate):
+                // Cek apakah jam pulang guru pada hari ini sudah lewat.
+                // Jika hari ini belum lewat jam pulang, guru belum tentu alpa (masih dalam jam sekolah/belum presensi).
+                if (isToday) {
+                    const batasMenitPulang = getBatasMenitPulang(guru, dayOfWeek);
+                    if (currentTotalMinutes < batasMenitPulang) {
+                        return; // Jam pulang hari ini belum selesai, jangan buat alpa dulu!
+                    }
+                }
+
+                // Cek apakah guru punya izin/sakit/cuti yang sudah disetujui pada tanggal ini
+                if (isGuruAdaIzin(guru, checkDate)) {
+                    return; // Ada izin, tidak dihitung alpa
+                }
+
                 // Cari apakah ada riwayat untuk guru ini pada tanggal tersebut
-                const recordExists = this.mockData.riwayat.some(r => 
-                    (r.nip === guru.username || r.namaGuru === guru.nama) && r.tanggal === tglString
+                const record = this.mockData.riwayat.find(r => 
+                    (r.nip === guru.username || r.nip === guru.nip || (guru.nama && r.namaGuru === guru.nama)) && 
+                    r.tanggal === tglString
                 );
-                
-                if (!recordExists) {
-                    this.mockData.riwayat.push({
+
+                if (!record) {
+                    // Belum ada riwayat sama sekali, dan jam pulang telah lewat -> buat ALPA
+                    const docId = `${year}${String(month + 1).padStart(2, '0')}${String(d).padStart(2, '0')}_${guru.username || guru.nip || 'anon'}`;
+                    const newAlpa = {
                         tanggal: tglString,
-                        nip: guru.username,
+                        nip: guru.username || guru.nip || '-',
                         namaGuru: guru.nama,
+                        jamMasuk: '--:--',
+                        jamPulang: '--:--',
                         jam_masuk: '--:--',
                         jam_pulang: '--:--',
                         status: 'ALPA',
-                        keterangan: 'Sistem: Tidak ada data presensi',
+                        keterangan: 'Sistem: Tidak melakukan presensi masuk dan pulang',
                         lokasi: '-',
-                        jarak: '-'
-                    });
+                        jarak: '-',
+                        fotoMasuk: '',
+                        fotoPulang: '',
+                        jarakMasuk: null,
+                        jarakPulang: null
+                    };
+
+                    this.mockData.riwayat.push(newAlpa);
+                    alpaDocsToSave.push({ docId, data: newAlpa });
                     hasChanges = true;
+                } else if ((record.status || '').toUpperCase() === 'ALPA') {
+                    // Pastikan properti jamMasuk & jamPulang selalu terdefinisi
+                    if (!record.jamMasuk) record.jamMasuk = '--:--';
+                    if (!record.jamPulang) record.jamPulang = '--:--';
                 }
             });
         }
-        
-        // Jika ada penambahan alpa otomatis, trigger save ke storage
+
+        // Urutkan riwayat berdasarkan tanggal terbaru di atas
         if (hasChanges) {
+            this.mockData.riwayat.sort((a,b) => {
+                let dateA = (a.tanggal || '').split('/').reverse().join('');
+                let dateB = (b.tanggal || '').split('/').reverse().join('');
+                return dateB.localeCompare(dateA);
+            });
+
             localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
         }
+
+        // Sinkronisasi ke Firestore (presensi_guru)
+        if (typeof db !== 'undefined') {
+            // Hapus doc ALPA yang dibatalkan karena hari libur baru
+            alpaDocsToDelete.forEach(docId => {
+                db.collection('presensi_guru').doc(docId).delete().catch(e => console.warn('Hapus alpa libur:', e));
+            });
+
+            // Simpan doc ALPA baru ke Firestore
+            alpaDocsToSave.forEach(item => {
+                db.collection('presensi_guru').doc(item.docId).set(item.data, { merge: true })
+                    .catch(e => console.warn('Simpan alpa ke Firestore:', e));
+            });
+        }
+
+        return hasChanges;
     },
 
     // ==========================================
@@ -1207,6 +1372,10 @@ var app = {
                     this.showToast('Akses ditolak: Anda bukan Admin', 'error', 'text-red-400');
                 }
                 
+                if (screenId === 'guru-dashboard' || screenId === 'guru-riwayat' || screenId === 'admin-dashboard' || screenId === 'admin-rekap' || screenId === 'admin-riwayat') {
+                    if (typeof this.autoGenerateAlpa === 'function') this.autoGenerateAlpa();
+                }
+
                 if (screenId === 'guru-dashboard') {
                     this.loadDashboardGuruData(user);
                 } else if (screenId === 'guru-riwayat') {
@@ -1484,10 +1653,15 @@ var app = {
                 
                 const statusEl = document.getElementById('guru-dashboard-status');
                 statusEl.innerText = d.presensi.status;
-                if(d.presensi.status === 'Hadir' || d.presensi.status === 'Selesai') {
+                const stUpper = (d.presensi.status || '').toUpperCase();
+                if(stUpper === 'HADIR' || stUpper === 'SELESAI') {
                     statusEl.className = 'text-[10px] bg-green-100 text-green-700 px-2 py-1 rounded w-max font-medium';
-                } else if(d.presensi.status === 'Terlambat') {
+                } else if(stUpper === 'TERLAMBAT') {
                     statusEl.className = 'text-[10px] bg-yellow-100 text-yellow-700 px-2 py-1 rounded w-max font-medium';
+                } else if(stUpper === 'ALPA') {
+                    statusEl.className = 'text-[10px] bg-red-100 text-red-700 px-2 py-1 rounded w-max font-bold border border-red-200';
+                } else if(stUpper === 'HARI LIBUR') {
+                    statusEl.className = 'text-[10px] bg-blue-100 text-blue-700 px-2 py-1 rounded w-max font-medium';
                 } else {
                     statusEl.className = 'text-[10px] bg-gray-100 text-gray-700 px-2 py-1 rounded w-max font-medium';
                 }
@@ -1497,6 +1671,10 @@ var app = {
                     statusPulangEl.innerText = 'Selesai';
                     statusPulangEl.className = 'text-[10px] bg-green-100 text-green-700 px-2 py-1 rounded w-max font-medium border border-green-200';
                     document.getElementById('guru-dashboard-pulang').classList.replace('text-gray-400', 'text-gray-800');
+                } else if (stUpper === 'ALPA') {
+                    statusPulangEl.innerText = 'Alpa';
+                    statusPulangEl.className = 'text-[10px] bg-red-100 text-red-700 px-2 py-1 rounded w-max font-bold border border-red-200';
+                    document.getElementById('guru-dashboard-pulang').classList.replace('text-gray-800', 'text-gray-400');
                 } else {
                     statusPulangEl.innerText = 'Belum Presensi';
                     statusPulangEl.className = 'text-[10px] bg-red-50 text-red-600 px-2 py-1 rounded w-max font-medium border border-red-100';
@@ -1529,6 +1707,10 @@ var app = {
         
             // MOCK LOGIC LOCALHOST
             setTimeout(() => {
+                if (typeof this.autoGenerateAlpa === 'function') {
+                    this.autoGenerateAlpa();
+                }
+
                 const now = new Date();
                 const hariArr = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
                 const bulanArr = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
@@ -1536,7 +1718,14 @@ var app = {
                 
                 const tglString = `${now.getDate().toString().padStart(2, '0')}/${(now.getMonth()+1).toString().padStart(2, '0')}/${now.getFullYear()}`;
                 const userInfo = JSON.parse(localStorage.getItem('user_info') || '{}');
-                let todayRecord = this.mockData.riwayat.find(r => r.tanggal === tglString && r.nip === (userInfo.username || userInfo.nip));
+                const myUsername = userInfo.username || '';
+                const myNip = userInfo.nip || '';
+                const myNama = userInfo.nama || '';
+
+                let todayRecord = (this.mockData.riwayat || []).find(r => 
+                    r.tanggal === tglString && 
+                    (r.nip === myUsername || r.nip === myNip || (myNama && r.namaGuru === myNama))
+                );
                 
                 let todayMasuk = '--:--';
                 let todayPulang = '--:--';
@@ -1544,18 +1733,27 @@ var app = {
                 let todayJarak = null;
                 
                 if (todayRecord) {
-                    todayMasuk = todayRecord.jamMasuk || '--:--';
-                    todayPulang = todayRecord.jamPulang || '--:--';
+                    todayMasuk = todayRecord.jamMasuk || todayRecord.jam_masuk || '--:--';
+                    todayPulang = todayRecord.jamPulang || todayRecord.jam_pulang || '--:--';
                     todayStatus = todayRecord.status || 'Hadir';
                     todayJarak = todayRecord.jarakPulang !== null && todayRecord.jarakPulang !== undefined ? todayRecord.jarakPulang : todayRecord.jarakMasuk;
+                } else {
+                    const nowDay = now.getDay();
+                    const isHoliday = (nowDay === 0) || 
+                                      (nowDay === 6 && this.mockData.schoolSettings && this.mockData.schoolSettings.sabtuLibur) ||
+                                      (this.mockData.schoolSettings && (this.mockData.schoolSettings.hariLibur || []).some(h => (typeof h === 'string' ? h : h.tanggal) === tglString));
+                    if (isHoliday) {
+                        todayStatus = 'Hari Libur';
+                    }
                 }
 
                 const currentMonthStr = `/${(now.getMonth()+1).toString().padStart(2, '0')}/${now.getFullYear()}`;
                 let myHadir = 0, myTerlambat = 0, myIzin = 0, mySakit = 0, myCuti = 0, myAlpa = 0;
-                this.mockData.riwayat.forEach(r => {
-                    if(r.nip === (userInfo.username || userInfo.nip) && (r.tanggal || '').endsWith(currentMonthStr)) {
+                (this.mockData.riwayat || []).forEach(r => {
+                    const isMy = (r.nip === myUsername || r.nip === myNip || (myNama && r.namaGuru === myNama));
+                    if(isMy && (r.tanggal || '').endsWith(currentMonthStr)) {
                         const s = (r.status || '').toUpperCase();
-                        if(s === 'HADIR' || s === 'SELESAI' || s === 'DI LUAR LOKASI') myHadir++;
+                        if(s === 'HADIR' || s === 'SELESAI' || s === 'DI LUAR LOKASI' || s.includes('KOREKSI')) myHadir++;
                         else if(s === 'TERLAMBAT') myTerlambat++;
                         else if(s === 'IZIN') myIzin++;
                         else if(s === 'SAKIT') mySakit++;
@@ -1572,7 +1770,7 @@ var app = {
                         statistik: { hadir: myHadir, terlambat: myTerlambat, izin: myIzin, sakit: mySakit, cuti: myCuti, alpa: myAlpa }
                     }
                 });
-            }, 800);
+            }, 100);
         
     },
 
@@ -1598,18 +1796,34 @@ var app = {
         const month = now.getMonth();
         const d = now.getDate();
         const tglToday = `${d.toString().padStart(2, '0')}/${(month+1).toString().padStart(2, '0')}/${year}`;
-        const hariLibur = (this.mockData.schoolSettings && this.mockData.schoolSettings.hariLibur) || [];
+        const rawHariLibur = (this.mockData.schoolSettings && this.mockData.schoolSettings.hariLibur) || [];
+        const sabtuLibur = !!(this.mockData.schoolSettings && this.mockData.schoolSettings.sabtuLibur);
+        const isLiburNasional = rawHariLibur.some(h => (typeof h === 'string' ? h : h.tanggal) === tglToday);
 
         if (now.getDay() === 0) {
             this.showToast('Hari ini hari Minggu (Hari Libur). Presensi tidak dibuka.', 'warning', 'text-yellow-400');
             return;
         }
-        if (hariLibur.includes(tglToday)) {
-            this.showToast('Hari ini adalah Hari Libur / Tanggal Merah. Anda tidak dihitung Alpa.', 'info', 'text-blue-400');
+        if (now.getDay() === 6 && sabtuLibur) {
+            this.showToast('Hari ini hari Sabtu (Hari Libur). Presensi tidak dibuka.', 'warning', 'text-yellow-400');
+            return;
+        }
+        if (isLiburNasional) {
+            this.showToast('Hari ini adalah Hari Libur / Tanggal Merah. Presensi tidak dibuka dan Anda tidak dihitung Alpa.', 'info', 'text-blue-400');
             return;
         }
 
         // Cek status hari ini
+        const userInfo = JSON.parse(localStorage.getItem('user_info') || '{}');
+        const todayRecord = (this.mockData.riwayat || []).find(r => 
+            r.tanggal === tglToday && 
+            (r.nip === userInfo.username || r.nip === userInfo.nip || (userInfo.nama && r.namaGuru === userInfo.nama))
+        );
+
+        if (todayRecord && (todayRecord.status || '').toUpperCase() === 'ALPA') {
+            this.showToast('Waktu presensi hari ini telah berakhir dan Anda telah tercatat Alpa. Silakan gunakan menu Pengajuan Izin/Koreksi.', 'error', 'text-red-400');
+            return;
+        }
         const waktuMasuk = document.getElementById('guru-dashboard-masuk').innerText.trim();
         const waktuPulang = document.getElementById('guru-dashboard-pulang').innerText.trim();
 
@@ -2363,10 +2577,14 @@ var app = {
             
             // Hapus dari memori lokal
             this.mockData.riwayat = [];
+            this.mockData.riwayatLamaMainState = [];
             this.mockData.izin = [];
             this.mockData.izinAdmin = [];
+            this.mockData.izinLamaMainState = [];
             this.mockData.slipGaji = [];
+            this.mockData.slipLamaMainState = [];
             this.mockData.jurnal = [];
+            this.mockData.jurnalLamaMainState = [];
             localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
             
             // Hapus dari mainState dengan merge: true agar dataGuru dan pengaturan tidak tertimpa/rusak
@@ -2443,24 +2661,39 @@ var app = {
         const rawLibur = (this.mockData.schoolSettings && this.mockData.schoolSettings.hariLibur) || [];
         
         // Bersihkan entri korup (misal teks '${parts[2]}' atau '${tgl}')
-        const libur = rawLibur.filter(t => t && typeof t === 'string' && !t.includes('${') && !t.includes('undefined'));
+        const libur = rawLibur.filter(t => {
+            if (!t) return false;
+            if (typeof t === 'string') return !t.includes('${') && !t.includes('undefined');
+            if (typeof t === 'object' && t.tanggal) return !t.tanggal.includes('${') && !t.tanggal.includes('undefined');
+            return false;
+        });
+
         if (libur.length !== rawLibur.length) {
             this.mockData.schoolSettings.hariLibur = libur;
             localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
             try { if (typeof db !== 'undefined') db.collection('pengaturan').doc('sekolah').set(this.mockData.schoolSettings, { merge: true }); } catch(e) {}
         }
+
+        // Render toggle sabtu libur
+        const toggleSabtu = document.getElementById('set-toggle-sabtu-libur');
+        if (toggleSabtu && this.mockData.schoolSettings) {
+            toggleSabtu.checked = !!this.mockData.schoolSettings.sabtuLibur;
+        }
         
         if (libur.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="3" class="text-center p-4 text-gray-500">Belum ada tanggal libur yang ditambahkan.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center p-4 text-gray-500">Belum ada tanggal libur khusus yang ditambahkan.</td></tr>';
             return;
         }
 
         let html = '';
-        libur.sort().forEach((tgl, index) => {
+        libur.forEach((item, index) => {
+            const tgl = typeof item === 'string' ? item : item.tanggal;
+            const ket = typeof item === 'string' ? '-' : (item.keterangan || '-');
             html += `
                 <tr class="border-b border-gray-100 hover:bg-gray-50">
                     <td class="text-center p-3 font-semibold text-gray-600">${index + 1}</td>
                     <td class="p-3 font-medium text-gray-800">${tgl}</td>
+                    <td class="p-3 text-gray-600 text-xs">${ket}</td>
                     <td class="text-center p-3">
                         <button onclick="app.hapusHariLibur(${index})" class="text-red-500 hover:bg-red-50 p-1.5 rounded-lg transition" title="Hapus">
                             <span class="material-icons-round text-[18px]">delete</span>
@@ -2472,9 +2705,35 @@ var app = {
         tbody.innerHTML = html;
     },
 
+    toggleSabtuLibur() {
+        const toggle = document.getElementById('set-toggle-sabtu-libur');
+        if (!this.mockData.schoolSettings) this.mockData.schoolSettings = {};
+        this.mockData.schoolSettings.sabtuLibur = toggle ? toggle.checked : false;
+        localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
+        
+        try {
+            if (typeof db !== 'undefined') {
+                db.collection('pengaturan').doc('sekolah').set(this.mockData.schoolSettings, { merge: true });
+                db.collection('appData').doc('mainState').set({
+                    schoolSettings: this.mockData.schoolSettings
+                }, { merge: true });
+            }
+        } catch(e) {}
+
+        this.autoGenerateAlpa();
+        if (this.state) {
+            if (this.state.currentScreen === 'admin-dashboard') this.loadDashboardAdmin();
+            else if (this.state.currentScreen === 'admin-rekap') this.loadRekapAdmin();
+            else if (this.state.currentScreen === 'admin-riwayat') this.loadRiwayatAdmin();
+        }
+        this.showToast(this.mockData.schoolSettings.sabtuLibur ? 'Sabtu diatur sebagai Hari Libur' : 'Sabtu diatur sebagai Hari Masuk', 'check_circle', 'text-green-400');
+    },
+
     tambahHariLibur() {
         const input = document.getElementById('set-tgl-libur');
+        const inputKet = document.getElementById('set-ket-libur');
         const val = input ? input.value : '';
+        const ket = inputKet ? inputKet.value.trim() : '';
         if (!val) {
             this.showToast('Pilih tanggal terlebih dahulu', 'warning', 'text-yellow-400');
             return;
@@ -2485,19 +2744,25 @@ var app = {
         if (parts.length !== 3) return;
         const formattedDate = `${parts[2]}/${parts[1]}/${parts[0]}`;
 
-        if (!this.mockData.schoolSettings) {
-            this.mockData.schoolSettings = {};
-        }
-        if (!this.mockData.schoolSettings.hariLibur) {
-            this.mockData.schoolSettings.hariLibur = [];
-        }
+        if (!this.mockData.schoolSettings) this.mockData.schoolSettings = {};
+        if (!this.mockData.schoolSettings.hariLibur) this.mockData.schoolSettings.hariLibur = [];
 
-        if (this.mockData.schoolSettings.hariLibur.includes(formattedDate)) {
-            this.showToast('Tanggal tersebut sudah ada di daftar', 'info', 'text-blue-400');
+        const isExist = this.mockData.schoolSettings.hariLibur.some(h => {
+            const d = typeof h === 'string' ? h : h.tanggal;
+            return d === formattedDate;
+        });
+
+        if (isExist) {
+            this.showToast('Tanggal tersebut sudah ada di daftar hari libur', 'info', 'text-blue-400');
             return;
         }
 
-        this.mockData.schoolSettings.hariLibur.push(formattedDate);
+        const liburObj = {
+            tanggal: formattedDate,
+            keterangan: ket || 'Hari Libur Sekolah'
+        };
+
+        this.mockData.schoolSettings.hariLibur.push(liburObj);
         localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
         
         // Simpan ke Firestore
@@ -2510,9 +2775,12 @@ var app = {
             }
         } catch(e) {}
         
+        // Bersihkan ALPA otomatis untuk tanggal ini dan sinkronkan
+        this.autoGenerateAlpa();
         this.renderHariLibur();
         if (input) input.value = '';
-        this.showToast('Hari libur berhasil ditambahkan: ' + formattedDate, 'check_circle', 'text-green-400');
+        if (inputKet) inputKet.value = '';
+        this.showToast(`Hari libur berhasil ditambahkan: ${formattedDate}`, 'check_circle', 'text-green-400');
     },
 
     hapusHariLibur(index) {
@@ -2531,6 +2799,7 @@ var app = {
                 }
             } catch(e) {}
             
+            this.autoGenerateAlpa();
             this.renderHariLibur();
             this.showToast('Hari libur dihapus', 'check_circle', 'text-green-400');
         }
@@ -2900,6 +3169,9 @@ var app = {
     // ==========================================
     
     loadRiwayatGuru() {
+        if (typeof this.autoGenerateAlpa === 'function') {
+            this.autoGenerateAlpa();
+        }
         const token = localStorage.getItem('session_token');
         const container = document.getElementById('riwayat-list');
         const filterBulan = document.getElementById('filter-bulan') ? document.getElementById('filter-bulan').value : new Date().getMonth() + 1;
@@ -2910,17 +3182,17 @@ var app = {
         const onSuccess = (res) => {
             if (res.success) {
                 if (res.data.length === 0) {
-                    container.innerHTML = `<div class="text-center p-4 text-gray-500">Tidak ada riwayat.</div>`;
+                    container.innerHTML = `<div class="text-center p-4 text-gray-500">Tidak ada riwayat presensi.</div>`;
                     return;
                 }
                 let html = '';
                 res.data.forEach(item => {
                     let badgeClass = 'bg-gray-100 text-gray-700';
                     const stat = (item.status || '').toUpperCase();
-                    if(stat === 'HADIR' || stat === 'SELESAI') badgeClass = 'bg-green-100 text-green-700';
+                    if(stat === 'HADIR' || stat === 'SELESAI' || stat.includes('KOREKSI')) badgeClass = 'bg-green-100 text-green-700';
                     else if(stat === 'TERLAMBAT') badgeClass = 'bg-yellow-100 text-yellow-700';
                     else if(stat === 'IZIN' || stat === 'SAKIT' || stat === 'CUTI') badgeClass = 'bg-blue-100 text-blue-700';
-                    else if(stat === 'ALPA') badgeClass = 'bg-red-100 text-red-700';
+                    else if(stat === 'ALPA') badgeClass = 'bg-red-100 text-red-700 font-bold';
 
                     html += `
                         <div class="grid grid-cols-5 gap-1 text-center text-[10px] sm:text-xs py-3 border-b border-gray-100 items-center hover:bg-gray-50">
@@ -2942,34 +3214,40 @@ var app = {
             }
         };
 
-        
-            // MOCK
-            setTimeout(() => {
-                const userInfo = JSON.parse(localStorage.getItem('user_info') || '{}');
-                const filterMonthStr = `/${filterBulan.toString().padStart(2, '0')}/${filterTahun}`;
-                
-                const myRiwayat = this.mockData.riwayat
-                    .filter(r => r.nip === (userInfo.username || userInfo.nip) && (r.tanggal || '').endsWith(filterMonthStr))
-                    .map(r => {
-                        return {
-                            tanggal: r.tanggal || '-',
-                            jam_masuk: r.jamMasuk || '--:--',
-                            jam_pulang: r.jamPulang || '--:--',
-                            status: r.status || 'Hadir',
-                            foto_masuk: r.fotoMasuk || '',
-                            foto_pulang: r.fotoPulang || ''
-                        };
-                    });
-                
-                onSuccess({
-                    success: true,
-                    data: myRiwayat
+        setTimeout(() => {
+            const userInfo = JSON.parse(localStorage.getItem('user_info') || '{}');
+            const filterMonthStr = `/${filterBulan.toString().padStart(2, '0')}/${filterTahun}`;
+            const myUsername = userInfo.username || '';
+            const myNip = userInfo.nip || '';
+            const myNama = userInfo.nama || '';
+            
+            const myRiwayat = (this.mockData.riwayat || [])
+                .filter(r => {
+                    const isMy = (r.nip === myUsername || r.nip === myNip || (myNama && r.namaGuru === myNama));
+                    return isMy && (r.tanggal || '').endsWith(filterMonthStr);
+                })
+                .map(r => {
+                    return {
+                        tanggal: r.tanggal || '-',
+                        jam_masuk: r.jamMasuk || r.jam_masuk || '--:--',
+                        jam_pulang: r.jamPulang || r.jam_pulang || '--:--',
+                        status: r.status || 'Alpa',
+                        foto_masuk: r.fotoMasuk || '',
+                        foto_pulang: r.fotoPulang || ''
+                    };
                 });
-            }, 800);
-        
+            
+            onSuccess({
+                success: true,
+                data: myRiwayat
+            });
+        }, 100);
     },
 
     loadRekapAdmin() {
+        if (typeof this.autoGenerateAlpa === 'function') {
+            this.autoGenerateAlpa();
+        }
         const token = localStorage.getItem('session_token');
         const tbody = document.getElementById('admin-rekap-tbody');
         const filterBulan = document.getElementById('admin-filter-bulan') ? document.getElementById('admin-filter-bulan').value : new Date().getMonth() + 1;
@@ -2982,32 +3260,35 @@ var app = {
                 let html = '';
                 res.data.forEach((item, index) => {
                     html += `
-                        <tr class="hover:bg-gray-50">
-                            <td class="text-center">${index + 1}</td>
-                            <td class="font-medium">${item.nama}</td>
-                            <td class="text-center font-bold text-green-600">${item.hadir}</td>
-                            <td class="text-center font-bold text-yellow-600">${item.terlambat}</td>
-                            <td class="text-center font-bold text-blue-600">${item.izin}</td>
-                            <td class="text-center font-bold text-orange-600">${item.sakit}</td>
-                            <td class="text-center font-bold text-purple-600">${item.cuti}</td>
-                            <td class="text-center font-bold text-red-600">${item.alpa}</td>
+                        <tr class="hover:bg-gray-50 border-b border-gray-100">
+                            <td class="text-center p-3 font-semibold text-gray-500">${index + 1}</td>
+                            <td class="p-3 font-medium text-gray-800">${item.nama}</td>
+                            <td class="text-center p-3 font-bold text-green-600">${item.hadir}</td>
+                            <td class="text-center p-3 font-bold text-yellow-600">${item.terlambat}</td>
+                            <td class="text-center p-3 font-bold text-blue-600">${item.izin}</td>
+                            <td class="text-center p-3 font-bold text-orange-600">${item.sakit}</td>
+                            <td class="text-center p-3 font-bold text-purple-600">${item.cuti}</td>
+                            <td class="text-center p-3 font-bold text-red-600">${item.alpa}</td>
                         </tr>
                     `;
                 });
-                if(res.data.length === 0) html = `<tr><td colspan="8" class="text-center p-4">Tidak ada data</td></tr>`;
+                if(res.data.length === 0) html = `<tr><td colspan="8" class="text-center p-4 text-gray-500">Tidak ada data guru</td></tr>`;
                 tbody.innerHTML = html;
             }
         };
 
         // LOGIKA DINAMIS REKAP
         const filterMonthStr = `/${filterBulan.toString().padStart(2, '0')}/${filterTahun}`;
+        const guruList = (this.mockData.dataGuru || []).filter(g => (g.statusAkun || '').toUpperCase() === 'AKTIF' || !g.statusAkun);
+        const dataGuruAktif = guruList.length > 0 ? guruList : (this.mockData.dataGuru || []);
         
-        const rekapData = this.mockData.dataGuru.map(guru => {
+        const rekapData = dataGuruAktif.map(guru => {
             let hadir = 0, terlambat = 0, izin = 0, sakit = 0, cuti = 0, alpa = 0;
-            this.mockData.riwayat.forEach(r => {
-                if(r.namaGuru === guru.nama && (r.tanggal || '').endsWith(filterMonthStr)) {
+            (this.mockData.riwayat || []).forEach(r => {
+                const matchGuru = (r.nip === guru.username || r.nip === guru.nip || (guru.nama && r.namaGuru === guru.nama));
+                if(matchGuru && (r.tanggal || '').endsWith(filterMonthStr)) {
                     const stat = (r.status || '').toUpperCase();
-                    if(stat === 'HADIR' || stat === 'SELESAI' || stat === 'DI LUAR LOKASI') hadir++;
+                    if(stat === 'HADIR' || stat === 'SELESAI' || stat === 'DI LUAR LOKASI' || stat.includes('KOREKSI')) hadir++;
                     else if(stat === 'TERLAMBAT') terlambat++;
                     else if(stat === 'IZIN') izin++;
                     else if(stat === 'SAKIT') sakit++;
@@ -3017,6 +3298,7 @@ var app = {
             });
             return {
                 nama: guru.nama,
+                nip: guru.nip && guru.nip !== '-' ? guru.nip : (guru.username || '-'),
                 hadir: hadir,
                 terlambat: terlambat,
                 izin: izin,
@@ -3029,25 +3311,40 @@ var app = {
     },
 
     loadDashboardAdmin() {
-        // Logika untuk menghitung statistik berdasarkan data tersimpan (this.mockData)
-        const totalGuru = this.mockData.dataGuru.length;
+        if (typeof this.autoGenerateAlpa === 'function') {
+            this.autoGenerateAlpa();
+        }
+
+        const guruAktif = (this.mockData.dataGuru || []).filter(g => (g.statusAkun || '').toUpperCase() === 'AKTIF' || !g.statusAkun);
+        const totalGuru = guruAktif.length || (this.mockData.dataGuru || []).length;
         
         const now = new Date();
         const tglString = `${now.getDate().toString().padStart(2, '0')}/${(now.getMonth()+1).toString().padStart(2, '0')}/${now.getFullYear()}`;
         
-        const presensiHariIni = this.mockData.riwayat.filter(r => {
-            return r.tanggal === tglString;
-        });
+        const presensiHariIni = (this.mockData.riwayat || []).filter(r => r.tanggal === tglString);
         
-        const sudahPresensi = presensiHariIni.length;
-        const belumPresensi = Math.max(0, totalGuru - sudahPresensi);
-        const terlambat = presensiHariIni.filter(r => (r.status || '').toUpperCase().includes('TERLAMBAT')).length;
+        let hadirHariIni = 0;
+        let terlambatHariIni = 0;
+        let alpaHariIni = 0;
+        let izinHariIni = 0;
+
+        presensiHariIni.forEach(r => {
+            const s = (r.status || '').toUpperCase();
+            if (s === 'HADIR' || s === 'SELESAI' || s === 'DI LUAR LOKASI' || s.includes('KOREKSI')) hadirHariIni++;
+            else if (s === 'TERLAMBAT') terlambatHariIni++;
+            else if (s === 'ALPA') alpaHariIni++;
+            else if (s === 'IZIN' || s === 'SAKIT' || s === 'CUTI') izinHariIni++;
+        });
+
+        const sudahTercatat = hadirHariIni + terlambatHariIni + alpaHariIni + izinHariIni;
+        const belumPresensi = Math.max(0, totalGuru - sudahTercatat);
 
         const setEl = (id, val) => { if(document.getElementById(id)) document.getElementById(id).innerText = val; };
         setEl('admin-stat-total', totalGuru);
-        setEl('admin-stat-sudah', sudahPresensi);
+        setEl('admin-stat-sudah', hadirHariIni);
+        setEl('admin-stat-terlambat', terlambatHariIni);
+        setEl('admin-stat-alpa', alpaHariIni);
         setEl('admin-stat-belum', belumPresensi);
-        setEl('admin-stat-terlambat', terlambat);
 
         // Menghitung status izin/cuti dari this.mockData.izinAdmin
         const izin = this.mockData.izinAdmin || [];
@@ -3066,34 +3363,51 @@ var app = {
             if (inputTeks) inputTeks.value = this.mockData.pengumuman.teks || '';
             if (inputAktif) inputAktif.checked = this.mockData.pengumuman.aktif || false;
         }
+
         // Render Aktivitas Terbaru (jika riwayat ada)
         const aktivitasContainer = document.getElementById('admin-aktivitas-terbaru');
         if (aktivitasContainer) {
-            if (this.mockData.riwayat.length === 0) {
+            if ((this.mockData.riwayat || []).length === 0) {
                 aktivitasContainer.innerHTML = '<p class="text-sm text-gray-500 italic text-center py-4">Belum ada aktivitas.</p>';
             } else {
-                // Ambil 3 aktivitas terbaru
-                const recent = this.mockData.riwayat.slice(0, 3);
+                // Ambil 4 aktivitas terbaru
+                const recent = (this.mockData.riwayat || []).slice(0, 4);
                 let html = '';
                 recent.forEach(r => {
                     let icon = 'login';
                     let bg = 'bg-green-100';
                     let textCol = 'text-green-600';
                     let actionText = 'melakukan presensi masuk';
+                    const stat = (r.status || '').toUpperCase();
                     
-                    if(r.status === 'TERLAMBAT') {
+                    if(stat === 'TERLAMBAT') {
                         icon = 'alarm_off';
+                        bg = 'bg-yellow-100';
+                        textCol = 'text-yellow-600';
+                        actionText = 'terlambat (' + (r.jamMasuk || r.jam_masuk || '-') + ')';
+                    } else if(stat === 'ALPA') {
+                        icon = 'person_off';
                         bg = 'bg-red-100';
                         textCol = 'text-red-600';
-                        actionText = 'terlambat (' + (r.jamMasuk || '-') + ')';
+                        actionText = 'tidak hadir (Alpa)';
+                    } else if(stat === 'IZIN' || stat === 'SAKIT' || stat === 'CUTI') {
+                        icon = 'event_busy';
+                        bg = 'bg-blue-100';
+                        textCol = 'text-blue-600';
+                        actionText = `mengajukan ${stat.toLowerCase()}`;
+                    } else if(stat === 'SELESAI') {
+                        icon = 'logout';
+                        bg = 'bg-green-100';
+                        textCol = 'text-green-600';
+                        actionText = 'melakukan presensi pulang';
                     }
                     
                     html += `
                         <div class="flex items-start gap-3">
                             <div class="w-8 h-8 rounded-full ${bg} ${textCol} flex items-center justify-center shrink-0 mt-1"><span class="material-icons-round text-[16px]">${icon}</span></div>
                             <div>
-                                <p class="text-sm text-gray-800"><span class="font-semibold">${r.namaGuru}</span> ${actionText}</p>
-                                <p class="text-xs text-gray-500">${r.tanggal}</p>
+                                <p class="text-sm text-gray-800"><span class="font-semibold">${r.namaGuru || 'Guru'}</span> ${actionText}</p>
+                                <p class="text-xs text-gray-500">${r.tanggal} ${r.jamMasuk && r.jamMasuk !== '--:--' ? '• ' + r.jamMasuk : ''}</p>
                             </div>
                         </div>
                     `;
@@ -3330,6 +3644,9 @@ var app = {
     },
 
     loadRiwayatAdmin() {
+        if (typeof this.autoGenerateAlpa === 'function') {
+            this.autoGenerateAlpa();
+        }
         const token = localStorage.getItem('session_token');
         const tbody = document.getElementById('admin-riwayat-tbody');
         const filterBulan = document.getElementById('admin-riwayat-bulan') ? document.getElementById('admin-riwayat-bulan').value : new Date().getMonth() + 1;
@@ -3345,19 +3662,19 @@ var app = {
                 res.data.forEach((item, index) => {
                     let badgeClass = 'bg-gray-100 text-gray-700';
                     const stat = (item.status || '').toUpperCase();
-                    if(stat === 'HADIR' || stat === 'SELESAI') badgeClass = 'bg-green-100 text-green-700';
+                    if(stat === 'HADIR' || stat === 'SELESAI' || stat.includes('KOREKSI')) badgeClass = 'bg-green-100 text-green-700';
                     else if(stat === 'TERLAMBAT') badgeClass = 'bg-yellow-100 text-yellow-700';
                     else if(stat === 'IZIN' || stat === 'SAKIT' || stat === 'CUTI') badgeClass = 'bg-blue-100 text-blue-700';
-                    else if(stat === 'ALPA') badgeClass = 'bg-red-100 text-red-700';
+                    else if(stat === 'ALPA') badgeClass = 'bg-red-100 text-red-700 font-bold';
 
                     html += `
                         <tr class="hover:bg-gray-50 border-b border-gray-100 text-sm">
-                            <td class="text-center p-3">${index + 1}</td>
-                            <td class="p-3">${item.tanggal}</td>
-                            <td class="p-3">${item.nip}</td>
-                            <td class="font-medium p-3">${item.nama}</td>
-                            <td class="text-center p-3">${item.jam_masuk}</td>
-                            <td class="text-center p-3">${item.jam_pulang}</td>
+                            <td class="text-center p-3 font-semibold text-gray-500">${index + 1}</td>
+                            <td class="p-3 text-gray-700 whitespace-nowrap">${item.tanggal}</td>
+                            <td class="p-3 text-gray-500 text-xs">${item.nip}</td>
+                            <td class="font-medium p-3 text-gray-800">${item.nama}</td>
+                            <td class="text-center p-3 font-mono text-xs">${item.jam_masuk}</td>
+                            <td class="text-center p-3 font-mono text-xs">${item.jam_pulang}</td>
                             <td class="text-center p-3"><span class="${badgeClass} text-[10px] px-2 py-1 rounded-full font-bold uppercase tracking-wider">${item.status || 'Alpa'}</span></td>
                             <td class="text-center p-3">
                                 ${item.foto_masuk || item.foto_pulang ? 
@@ -3368,7 +3685,7 @@ var app = {
                         </tr>
                     `;
                 });
-                if(res.data.length === 0) html = `<tr><td colspan="8" class="text-center p-4">Tidak ada data</td></tr>`;
+                if(res.data.length === 0) html = `<tr><td colspan="8" class="text-center p-4 text-gray-500">Tidak ada data riwayat presensi</td></tr>`;
                 tbody.innerHTML = html;
             } else if (tbody) {
                 tbody.innerHTML = `<tr><td colspan="8" class="text-center p-4 text-red-500">Gagal: ${res.message}</td></tr>`;
@@ -3379,13 +3696,14 @@ var app = {
         // LOGIKA DINAMIS RIWAYAT
         const filterMonthStr = `/${filterBulan.toString().padStart(2, '0')}/${filterTahun}`;
         
-        let filteredRiwayat = this.mockData.riwayat;
+        let filteredRiwayat = this.mockData.riwayat || [];
         
         if (filterBulan && filterTahun) {
             filteredRiwayat = filteredRiwayat.filter(r => (r.tanggal || '').endsWith(filterMonthStr));
         }
         if (filterStatus) {
-            filteredRiwayat = filteredRiwayat.filter(r => (r.status || '').toUpperCase().includes(filterStatus.toUpperCase()));
+            const fsUpper = filterStatus.toUpperCase();
+            filteredRiwayat = filteredRiwayat.filter(r => (r.status || '').toUpperCase().includes(fsUpper));
         }
         if (filterGuru) {
             const fg = filterGuru.toLowerCase();
@@ -3396,21 +3714,20 @@ var app = {
         }
 
         const dataRiwayat = filteredRiwayat.map(r => {
-            // Coba cari NIP aktual dari data guru
             let nip = r.nip || '-';
-            const guruInfo = this.mockData.dataGuru.find(g => g.username === r.nip || g.nip === r.nip || g.nama === r.namaGuru);
+            const guruInfo = (this.mockData.dataGuru || []).find(g => g.username === r.nip || g.nip === r.nip || g.nama === r.namaGuru);
             if (guruInfo) {
-                nip = (guruInfo.nip && guruInfo.nip !== '-') ? guruInfo.nip : '-';
+                nip = (guruInfo.nip && guruInfo.nip !== '-') ? guruInfo.nip : (guruInfo.username || nip);
             }
             return {
                 tanggal: r.tanggal,
                 nip: nip,
-                nama: r.namaGuru || '-',
-                jam_masuk: r.jamMasuk || '--:--',
-                jam_pulang: r.jamPulang || '--:--',
+                nama: r.namaGuru || (guruInfo ? guruInfo.nama : '-'),
+                jam_masuk: r.jamMasuk || r.jam_masuk || '--:--',
+                jam_pulang: r.jamPulang || r.jam_pulang || '--:--',
                 status: r.status,
-                foto_masuk: r.fotoMasuk || '#',
-                foto_pulang: r.fotoPulang || '#'
+                foto_masuk: r.fotoMasuk || '',
+                foto_pulang: r.fotoPulang || ''
             };
         });
         setTimeout(() => onSuccess({ success: true, data: dataRiwayat }), 100);
@@ -5994,9 +6311,22 @@ var app = {
                                     <h3 class="font-bold text-gray-800 flex items-center gap-2 mb-4"><span class="material-icons-round text-red-500">event_busy</span> Pengaturan Hari Libur / Tanggal Merah</h3>
                                     <p class="text-xs text-gray-500 mb-4">Hari libur yang ditambahkan di sini akan diabaikan oleh sistem Alpa Otomatis (guru tidak akan dihitung Alpa pada tanggal tersebut).</p>
                                     
-                                    <div class="flex gap-2 mb-4 max-w-sm">
-                                        <input type="date" id="set-tgl-libur" class="flex-1 border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none">
-                                        <button onclick="app.tambahHariLibur()" class="bg-primary hover:bg-primary-dark text-white px-4 py-2 rounded-lg text-sm font-medium transition flex items-center gap-1">
+                                    <!-- Toggle Sabtu Libur (5 Hari Kerja) -->
+                                    <div class="mb-5 p-3.5 bg-gray-50 border border-gray-200 rounded-xl flex items-center justify-between max-w-lg">
+                                        <div>
+                                            <p class="text-sm font-semibold text-gray-800">Hari Sabtu Libur (5 Hari Kerja)</p>
+                                            <p class="text-xs text-gray-500">Aktifkan jika sekolah hanya 5 hari kerja (Sabtu libur & tidak dihitung Alpa).</p>
+                                        </div>
+                                        <label class="relative inline-flex items-center cursor-pointer shrink-0 ml-4">
+                                            <input type="checkbox" id="set-toggle-sabtu-libur" class="sr-only peer" onchange="app.toggleSabtuLibur()">
+                                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+                                        </label>
+                                    </div>
+
+                                    <div class="flex flex-col sm:flex-row gap-2 mb-4 max-w-lg">
+                                        <input type="date" id="set-tgl-libur" class="border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none">
+                                        <input type="text" id="set-ket-libur" placeholder="Keterangan (contoh: Libur Nasional)" class="flex-1 border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none">
+                                        <button onclick="app.tambahHariLibur()" class="bg-primary hover:bg-primary-dark text-white px-4 py-2.5 rounded-lg text-sm font-medium transition flex items-center justify-center gap-1 shrink-0 shadow-sm">
                                             <span class="material-icons-round text-[18px]">add</span> Tambah
                                         </button>
                                     </div>
@@ -6007,7 +6337,8 @@ var app = {
                                                 <tr>
                                                     <th class="w-12 text-center">No</th>
                                                     <th>Tanggal Libur</th>
-                                                    <th class="w-24 text-center">Aksi</th>
+                                                    <th>Keterangan</th>
+                                                    <th class="w-20 text-center">Aksi</th>
                                                 </tr>
                                             </thead>
                                             <tbody id="list-hari-libur">
@@ -6268,7 +6599,7 @@ var app = {
                     ${this.adminTopbar('Dashboard Admin')}
                     <div class="p-6 flex-1 overflow-y-auto">
                         <!-- Stats Grid -->
-                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
                             <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex items-center justify-between">
                                 <div>
                                     <p class="text-sm text-gray-500 font-medium">Total Guru</p>
@@ -6286,13 +6617,20 @@ var app = {
                             <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex items-center justify-between">
                                 <div>
                                     <p class="text-sm text-gray-500 font-medium">Terlambat</p>
-                                    <p class="text-2xl font-bold text-red-500" id="admin-stat-terlambat">-</p>
+                                    <p class="text-2xl font-bold text-yellow-600" id="admin-stat-terlambat">-</p>
                                 </div>
-                                <div class="w-12 h-12 bg-red-50 text-red-500 rounded-full flex items-center justify-center"><span class="material-icons-round">alarm_off</span></div>
+                                <div class="w-12 h-12 bg-yellow-50 text-yellow-500 rounded-full flex items-center justify-center"><span class="material-icons-round">alarm_off</span></div>
                             </div>
                             <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex items-center justify-between">
                                 <div>
-                                    <p class="text-sm text-gray-500 font-medium">Belum Absen</p>
+                                    <p class="text-sm text-gray-500 font-medium">Alpa Hari Ini</p>
+                                    <p class="text-2xl font-bold text-red-600" id="admin-stat-alpa">-</p>
+                                </div>
+                                <div class="w-12 h-12 bg-red-50 text-red-500 rounded-full flex items-center justify-center"><span class="material-icons-round">person_off</span></div>
+                            </div>
+                            <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex items-center justify-between">
+                                <div>
+                                    <p class="text-sm text-gray-500 font-medium">Belum Presensi</p>
                                     <p class="text-2xl font-bold text-purple-600" id="admin-stat-belum">-</p>
                                 </div>
                                 <div class="w-12 h-12 bg-purple-50 text-purple-500 rounded-full flex items-center justify-center"><span class="material-icons-round">help_outline</span></div>
