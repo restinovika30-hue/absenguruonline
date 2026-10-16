@@ -614,12 +614,12 @@ input[type="file"]::file-selector-button:hover {
     <script>
         // GANTI KONFIGURASI INI DENGAN FIREBASE PROJECT ANDA
         const firebaseConfig = {
-            apiKey: "AIzaSyAXTS36pTOIRVXAJ6PMkqbuUihMNy_49fE",
-            authDomain: "absenguruonline-bada0.firebaseapp.com",
-            projectId: "absenguruonline-bada0",
-            storageBucket: "absenguruonline-bada0.firebasestorage.app",
-            messagingSenderId: "399770094333",
-            appId: "1:399770094333:web:3d69c71f05fa47cd660c94"
+            apiKey: "AIzaSyDL2IQTkYxcRl4XmEoOgf76CVVbj9qr6z0",
+            authDomain: "absensiguru-268d9.firebaseapp.com",
+            projectId: "absensiguru-268d9",
+            storageBucket: "absensiguru-268d9.firebasestorage.app",
+            messagingSenderId: "1014685328974",
+            appId: "1:1014685328974:web:031c9d916a8b3605ca051f"
         };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
@@ -1259,41 +1259,70 @@ var app = {
 
                 // Helper untuk membersihkan ALPA sistem jika kondisi tidak lagi terpenuhi (misal izin disetujui, ada koreksi, atau jam belum usai)
                 const removeSystemAlpa = () => {
-                    const idx = this.mockData.riwayat.findIndex(r => 
-                        ((r.nip && (r.nip === nip || r.nip === guru.nip || r.nip === guru.username)) || 
-                         (r.namaGuru && nama && r.namaGuru.trim().toLowerCase() === nama.trim().toLowerCase())) && 
-                        r.tanggal === tglStr && (r.status || '').toUpperCase() === 'ALPA'
-                    );
-                    if (idx !== -1) {
-                        this.mockData.riwayat.splice(idx, 1);
-                        hasChanges = true;
-                        const docId = `${checkYear}${checkMonth.toString().padStart(2, '0')}${d.toString().padStart(2, '0')}_${nip}`;
-                        try { if (typeof db !== 'undefined') db.collection('presensi_guru').doc(docId).delete(); } catch(e){}
-                    }
+                    let removed = false;
+                    this.mockData.riwayat = this.mockData.riwayat.filter(r => {
+                        const matchGuru = (r.nip && (r.nip === nip || r.nip === guru.nip || r.nip === guru.username || r.nip === guru.id)) || 
+                                          (r.namaGuru && nama && r.namaGuru.trim().toLowerCase() === nama.trim().toLowerCase());
+                        const matchTgl = r.tanggal === tglStr;
+                        const isAlpa = (r.status || '').toUpperCase() === 'ALPA';
+                        if (matchGuru && matchTgl && isAlpa) {
+                            removed = true;
+                            const targetNips = [r.nip, nip, guru.nip, guru.username, guru.id].filter(Boolean);
+                            targetNips.forEach(tNip => {
+                                const docId = `${checkYear}${checkMonth.toString().padStart(2, '0')}${d.toString().padStart(2, '0')}_${tNip}`;
+                                try { if (typeof db !== 'undefined') db.collection('presensi_guru').doc(docId).delete(); } catch(e){}
+                            });
+                            return false;
+                        }
+                        return true;
+                    });
+                    if (removed) hasChanges = true;
                 };
 
                 // Kondisi 8: Waktu presensi yang diwajibkan telah berakhir sesuai aturan jam kerja
                 if (isToday) {
-                    const shift = guru.shift || 'Pagi';
+                    const shiftRaw = String(guru.shift || guru.shiftKerja || guru.jamKerja || 'Pagi').trim().toLowerCase();
+                    const isSiang = shiftRaw.includes('siang');
                     const dayOfWeek = checkDate.getDay();
                     const cfgLokasi = this.mockData.lokasiDanJamKerja || {};
                     const cfgJk = cfgLokasi.jamKerja || {};
-                    const shiftCfg = shift === 'Siang' ? (cfgJk.siang || {}) : (cfgJk.pagi || {});
+                    const shiftCfg = isSiang ? (cfgJk.siang || {}) : (cfgJk.pagi || {});
 
-                    let jamPulangStr = '12:00';
-                    if (dayOfWeek === 5) {
-                        jamPulangStr = shiftCfg.jumat?.pulang || (shift === 'Siang' ? '17:30' : '11:30');
-                    } else if (dayOfWeek === 6) {
-                        jamPulangStr = shiftCfg.sabtu?.pulang || (shift === 'Siang' ? '17:00' : '12:00');
-                    } else {
-                        jamPulangStr = shiftCfg.seninKamis?.pulang || (shift === 'Siang' ? '17:00' : '12:00');
+                    let defaultPulang = isSiang ? (dayOfWeek === 5 ? '17:30' : '17:00') : (dayOfWeek === 5 ? '11:30' : '12:00');
+                    let jamPulangStr = defaultPulang;
+
+                    if (dayOfWeek === 5) { // Hari Jumat
+                        jamPulangStr = shiftCfg.jumat?.pulang || defaultPulang;
+                        const domEl = document.getElementById(isSiang ? 'pengaturan-jam-pulang-siang-jumat' : 'pengaturan-jam-pulang-pagi-jumat');
+                        if (domEl && domEl.value) jamPulangStr = domEl.value;
+                    } else if (dayOfWeek === 6) { // Hari Sabtu
+                        jamPulangStr = shiftCfg.sabtu?.pulang || defaultPulang;
+                        const domEl = document.getElementById(isSiang ? 'pengaturan-jam-pulang-siang-sabtu' : 'pengaturan-jam-pulang-pagi-sabtu');
+                        if (domEl && domEl.value) jamPulangStr = domEl.value;
+                    } else { // Hari Senin - Kamis
+                        jamPulangStr = shiftCfg.seninKamis?.pulang || defaultPulang;
+                        const domEl = document.getElementById(isSiang ? 'pengaturan-jam-pulang-siang' : 'pengaturan-jam-pulang-pagi');
+                        if (domEl && domEl.value) jamPulangStr = domEl.value;
                     }
 
-                    const [hP, mP] = jamPulangStr.split(':').map(Number);
-                    const pulangTotalMin = (hP * 60) + (mP || 0);
+                    let [hP, mP] = (jamPulangStr || defaultPulang).split(':').map(Number);
+                    if (isNaN(hP)) hP = isSiang ? 17 : (dayOfWeek === 5 ? 11 : 12);
+                    if (isNaN(mP)) mP = (isSiang && dayOfWeek === 5) ? 30 : ((!isSiang && dayOfWeek === 5) ? 30 : 0);
+                    const pulangTotalMin = (hP * 60) + mP;
 
-                    // Jangan menetapkan ALPA jika jam kerja hari ini belum berakhir
-                    if (currentTotalMin < pulangTotalMin) {
+                    // Batas waktu berakhirnya jam kerja hari ini:
+                    // Untuk Shift Siang: jam kerja berakhir pada jam pulang sore (17:00 / Jumat 17:30 atau sesuai setting).
+                    // Untuk Shift Pagi: jam kepulangan siswa (11:30 Jumat / 12:00 Senin-Kamis) merupakan awal dibukanya presensi kepulangan,
+                    // dan jam kerja aktif guru di sekolah minimal berlangsung hingga pukul 14:00 (Jumat & Senin-Kamis) atau 13:00 (Sabtu),
+                    // atau sesuai jam pulang yang diatur admin jika disetel lebih sore.
+                    let jamKerjaSelesaiTotalMin = pulangTotalMin;
+                    if (!isSiang) {
+                        const minSelesaiPagi = (dayOfWeek === 6 ? 13 : 14) * 60;
+                        jamKerjaSelesaiTotalMin = Math.max(minSelesaiPagi, pulangTotalMin);
+                    }
+
+                    // Jangan menetapkan ALPA jika jam kerja hari ini belum berakhir (berlaku untuk Shift Pagi maupun Shift Siang)
+                    if (currentTotalMin < jamKerjaSelesaiTotalMin) {
                         removeSystemAlpa();
                         return;
                     }
@@ -2171,23 +2200,24 @@ var app = {
         }
         const guruProfile = this.mockData.dataGuru.find(g => g.id === currentUser.id);
         const shiftGuru = guruProfile ? (guruProfile.shift || 'Pagi') : 'Pagi';
+        const isShiftSiang = String(shiftGuru || '').toLowerCase().includes('siang');
 
         // Cek terlambat (hanya saat presensi masuk)
         const cfgLokasi = this.mockData.lokasiDanJamKerja || {};
         const cfgJk = cfgLokasi.jamKerja || {};
-        const shiftCfg = shiftGuru === 'Siang' ? (cfgJk.siang || {}) : (cfgJk.pagi || {});
+        const shiftCfg = isShiftSiang ? (cfgJk.siang || {}) : (cfgJk.pagi || {});
 
         if (this.presensiState.tipe === 'Masuk') {
             const dayOfWeek = jamSekarang.getDay();
-            let idInputMasuk = shiftGuru === 'Siang' ? 'pengaturan-jam-masuk-siang' : 'pengaturan-jam-masuk-pagi';
-            let jamMasukStr = (shiftCfg.seninKamis && shiftCfg.seninKamis.masuk) || (shiftGuru === 'Siang' ? '13:00' : '07:30'); 
+            let idInputMasuk = isShiftSiang ? 'pengaturan-jam-masuk-siang' : 'pengaturan-jam-masuk-pagi';
+            let jamMasukStr = (shiftCfg.seninKamis && shiftCfg.seninKamis.masuk) || (isShiftSiang ? '13:00' : '07:30'); 
             
             if (dayOfWeek === 5) { // Jumat
-                const jumatEl = document.getElementById(shiftGuru === 'Siang' ? 'pengaturan-jam-masuk-siang-jumat' : 'pengaturan-jam-masuk-pagi-jumat');
+                const jumatEl = document.getElementById(isShiftSiang ? 'pengaturan-jam-masuk-siang-jumat' : 'pengaturan-jam-masuk-pagi-jumat');
                 if (jumatEl && jumatEl.value) jamMasukStr = jumatEl.value;
                 else if (shiftCfg.jumat && shiftCfg.jumat.masuk) jamMasukStr = shiftCfg.jumat.masuk;
             } else if (dayOfWeek === 6) { // Sabtu
-                const sabtuEl = document.getElementById(shiftGuru === 'Siang' ? 'pengaturan-jam-masuk-siang-sabtu' : 'pengaturan-jam-masuk-pagi-sabtu');
+                const sabtuEl = document.getElementById(isShiftSiang ? 'pengaturan-jam-masuk-siang-sabtu' : 'pengaturan-jam-masuk-pagi-sabtu');
                 if (sabtuEl && sabtuEl.value) jamMasukStr = sabtuEl.value;
                 else if (shiftCfg.sabtu && shiftCfg.sabtu.masuk) jamMasukStr = shiftCfg.sabtu.masuk;
             } else {
@@ -2210,16 +2240,16 @@ var app = {
         } else if (this.presensiState.tipe === 'Pulang') {
             // Cek pulang cepat
             const dayOfWeek = jamSekarang.getDay();
-            let idInputPulang = shiftGuru === 'Siang' ? 'pengaturan-jam-pulang-siang' : 'pengaturan-jam-pulang-pagi';
-            let jamPulangStr = (shiftCfg.seninKamis && shiftCfg.seninKamis.pulang) || (shiftGuru === 'Siang' ? '17:00' : '12:00'); 
+            let idInputPulang = isShiftSiang ? 'pengaturan-jam-pulang-siang' : 'pengaturan-jam-pulang-pagi';
+            let jamPulangStr = (shiftCfg.seninKamis && shiftCfg.seninKamis.pulang) || (isShiftSiang ? '17:00' : '12:00'); 
             
             // Check specific days
             if (dayOfWeek === 5) { // Jumat
-                const jumatEl = document.getElementById(shiftGuru === 'Siang' ? 'pengaturan-jam-pulang-siang-jumat' : 'pengaturan-jam-pulang-pagi-jumat');
+                const jumatEl = document.getElementById(isShiftSiang ? 'pengaturan-jam-pulang-siang-jumat' : 'pengaturan-jam-pulang-pagi-jumat');
                 if (jumatEl && jumatEl.value) jamPulangStr = jumatEl.value;
                 else if (shiftCfg.jumat && shiftCfg.jumat.pulang) jamPulangStr = shiftCfg.jumat.pulang;
             } else if (dayOfWeek === 6) { // Sabtu
-                const sabtuEl = document.getElementById(shiftGuru === 'Siang' ? 'pengaturan-jam-pulang-siang-sabtu' : 'pengaturan-jam-pulang-pagi-sabtu');
+                const sabtuEl = document.getElementById(isShiftSiang ? 'pengaturan-jam-pulang-siang-sabtu' : 'pengaturan-jam-pulang-pagi-sabtu');
                 if (sabtuEl && sabtuEl.value) jamPulangStr = sabtuEl.value;
                 else if (shiftCfg.sabtu && shiftCfg.sabtu.pulang) jamPulangStr = shiftCfg.sabtu.pulang;
             } else {
@@ -6095,6 +6125,7 @@ var app = {
                     nama: (row.NAMA || '').toString().trim(),
                     jabatan: (row.JABATAN || '').toString().trim() || 'Guru',
                     statusKepegawaian: (row.STATUS_KEPEGAWAIAN || '').toString().trim() || 'Lainnya',
+                    shift: (row.SHIFT || row.Shift || row.shift || '').toString().trim() || 'Pagi',
                     noHp: (row.NO_HP || '').toString().trim(),
                     email: (row.EMAIL || '').toString().trim(),
                     username: (row.USERNAME || '').toString().trim() || idGuru,
