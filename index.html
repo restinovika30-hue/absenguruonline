@@ -614,12 +614,12 @@ input[type="file"]::file-selector-button:hover {
     <script>
         // GANTI KONFIGURASI INI DENGAN FIREBASE PROJECT ANDA
         const firebaseConfig = {
-            apiKey: "AIzaSyAXTS36pTOIRVXAJ6PMkqbuUihMNy_49fE",
-            authDomain: "absenguruonline-bada0.firebaseapp.com",
-            projectId: "absenguruonline-bada0",
-            storageBucket: "absenguruonline-bada0.firebasestorage.app",
-            messagingSenderId: "399770094333",
-            appId: "1:399770094333:web:3d69c71f05fa47cd660c94"
+            apiKey: "AIzaSyDL2IQTkYxcRl4XmEoOgf76CVVbj9qr6z0",
+            authDomain: "absensiguru-268d9.firebaseapp.com",
+            projectId: "absensiguru-268d9",
+            storageBucket: "absensiguru-268d9.firebasestorage.app",
+            messagingSenderId: "1014685328974",
+            appId: "1:1014685328974:web:031c9d916a8b3605ca051f"
         };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
@@ -738,7 +738,7 @@ var app = {
         try {
             db.collection('appData').doc('mainState').onSnapshot((doc) => {
                 if (doc.exists) {
-                    const fbData = doc.data();
+                    const fbData = doc.data() || {};
                     // Cegah loop tak berujung, update lokal jika Firebase punya versi berbeda
                     if (JSON.stringify(fbData) !== JSON.stringify(this.mockData)) {
                         const localSchool = this.mockData.schoolSettings || {};
@@ -750,14 +750,50 @@ var app = {
                         const localRiwayat = this.mockData.riwayat || [];
                         const localDataGuru = this.mockData.dataGuru || [];
 
+                        // Buat salinan fbData tanpa koleksi yang memiliki dokumen/koleksi tersendiri
+                        // Ini mencegah terhapusnya riwayat presensi, jurnal, izin, slip gaji, dan data guru
+                        const cleanFbData = { ...fbData };
+                        delete cleanFbData.riwayat;
+                        delete cleanFbData.riwayatLamaMainState;
+                        delete cleanFbData.izin;
+                        delete cleanFbData.izinAdmin;
+                        delete cleanFbData.izinLamaMainState;
+                        delete cleanFbData.jurnal;
+                        delete cleanFbData.jurnalLamaMainState;
+                        delete cleanFbData.slipGaji;
+                        delete cleanFbData.slipLamaMainState;
+                        delete cleanFbData.dataGuru;
+                        delete cleanFbData.dataGuruLamaMainState;
+
                         this.mockData = {
                             ...this.mockData,
-                            ...fbData
+                            ...cleanFbData
                         };
 
-                        // Pertahankan data guru jika di mainState belum ada
+                        // Pertahankan data riwayat, izin, jurnal, slip gaji, data guru
+                        if (localRiwayat && localRiwayat.length > 0) {
+                            if (!this.mockData.riwayat || this.mockData.riwayat.length === 0) {
+                                this.mockData.riwayat = localRiwayat;
+                            }
+                        }
+                        if (localJurnal && localJurnal.length > 0) {
+                            if (!this.mockData.jurnal || this.mockData.jurnal.length === 0) {
+                                this.mockData.jurnal = localJurnal;
+                            }
+                        }
+                        if (localIzin && localIzin.length > 0) {
+                            if (!this.mockData.izinAdmin || this.mockData.izinAdmin.length === 0) {
+                                this.mockData.izinAdmin = localIzin;
+                                this.mockData.izin = localIzin;
+                            }
+                        }
+                        if (localSlip && localSlip.length > 0) {
+                            if (!this.mockData.slipGaji || this.mockData.slipGaji.length === 0) {
+                                this.mockData.slipGaji = localSlip;
+                            }
+                        }
                         if (localDataGuru && localDataGuru.length > 0) {
-                            if (!fbData.dataGuru || fbData.dataGuru.length === 0) {
+                            if (!this.mockData.dataGuru || this.mockData.dataGuru.length === 0) {
                                 this.mockData.dataGuru = localDataGuru;
                             }
                         }
@@ -776,7 +812,7 @@ var app = {
                             }
                         }
 
-                        // Pertahankan schoolSettings lokal jika di mainState tidak ada atau masih default avatar
+                        // Pertahankan schoolSettings lokal jika di mainState tidak ada atau data libur hilang
                         if (!fbData.schoolSettings || Object.keys(fbData.schoolSettings).length === 0) {
                             this.mockData.schoolSettings = localSchool;
                         } else {
@@ -784,6 +820,12 @@ var app = {
                                 ...localSchool,
                                 ...fbData.schoolSettings
                             };
+                            if (localSchool.hariLibur && localSchool.hariLibur.length > 0 && (!this.mockData.schoolSettings.hariLibur || this.mockData.schoolSettings.hariLibur.length === 0)) {
+                                this.mockData.schoolSettings.hariLibur = localSchool.hariLibur;
+                            }
+                            if (localSchool.hariLiburMingguan && (!this.mockData.schoolSettings.hariLiburMingguan || this.mockData.schoolSettings.hariLiburMingguan.length === 0)) {
+                                this.mockData.schoolSettings.hariLiburMingguan = localSchool.hariLiburMingguan;
+                            }
                             if (localSchool.logoSekolahUrl && !localSchool.logoSekolahUrl.includes('ui-avatars.com')) {
                                 this.mockData.schoolSettings.logoSekolahUrl = localSchool.logoSekolahUrl;
                             }
@@ -1073,31 +1115,69 @@ var app = {
     // ==========================================
     // LOGIKA PENETAPAN ALPA OTOMATIS & LIBUR
     // ==========================================
+    parseDateSafe(d) {
+        if (!d) return null;
+        if (d instanceof Date) return isNaN(d.getTime()) ? null : d;
+        if (typeof d === 'string') {
+            const trimmed = d.trim();
+            if (trimmed.includes('/')) {
+                const parts = trimmed.split('/');
+                if (parts.length === 3) {
+                    return new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+                }
+            } else if (trimmed.includes('-')) {
+                const parts = trimmed.split('-');
+                if (parts.length === 3) {
+                    if (parts[0].length === 4) {
+                        return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+                    } else {
+                        return new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+                    }
+                }
+            }
+            const parsed = new Date(trimmed);
+            return isNaN(parsed.getTime()) ? null : parsed;
+        }
+        return null;
+    },
+
     formatDateDDMMYYYY(date) {
-        const d = date.getDate().toString().padStart(2, '0');
-        const m = (date.getMonth() + 1).toString().padStart(2, '0');
-        const y = date.getFullYear();
+        if (!date) return '';
+        const dObj = this.parseDateSafe(date);
+        if (!dObj || isNaN(dObj.getTime())) return '';
+        const d = dObj.getDate().toString().padStart(2, '0');
+        const m = (dObj.getMonth() + 1).toString().padStart(2, '0');
+        const y = dObj.getFullYear();
         return `${d}/${m}/${y}`;
     },
 
     isHariLiburMingguan(date) {
-        const dayOfWeek = date.getDay(); // 0 = Minggu, 1 = Senin, ..., 6 = Sabtu
+        const dObj = this.parseDateSafe(date);
+        if (!dObj) return false;
+        const dayOfWeek = dObj.getDay(); // 0 = Minggu, 1 = Senin, ..., 6 = Sabtu
         const liburMingguan = (this.mockData.schoolSettings && this.mockData.schoolSettings.hariLiburMingguan) || [0];
         return liburMingguan.includes(dayOfWeek);
     },
 
     isHariLiburKhusus(date) {
-        const tglStr = this.formatDateDDMMYYYY(date);
-        const ymdStr = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`;
-        const listLibur = (this.mockData.schoolSettings && this.mockData.schoolSettings.hariLibur) || [];
-        return listLibur.some(item => {
+        const dObj = this.parseDateSafe(date);
+        if (!dObj) return false;
+        const tglStr = this.formatDateDDMMYYYY(dObj);
+        const ymdStr = `${dObj.getFullYear()}-${(dObj.getMonth() + 1).toString().padStart(2, '0')}-${dObj.getDate().toString().padStart(2, '0')}`;
+        const rawList = (this.mockData.schoolSettings && this.mockData.schoolSettings.hariLibur) || [];
+        return rawList.some(item => {
+            if (!item) return false;
             if (typeof item === 'string') {
                 return item === tglStr || item === ymdStr;
-            } else if (item && typeof item === 'object') {
+            } else if (typeof item === 'object') {
                 return item.tanggal === tglStr || item.tanggal === ymdStr;
             }
             return false;
         });
+    },
+
+    isTanggalLibur(date) {
+        return this.isHariLiburMingguan(date) || this.isHariLiburKhusus(date);
     },
 
     isDateInRange(targetDate, startDateStr, endDateStr) {
@@ -1234,15 +1314,18 @@ var app = {
 
             // Jika tanggal ini adalah hari libur mingguan atau libur khusus/sekolah:
             if (isLiburMingguan || isLiburKhusus) {
-                // Bersihkan ALPA sistem jika pernah tercatat sebelumnya di tanggal ini
+                // Bersihkan SEMUA ALPA jika pernah tercatat sebelumnya di tanggal libur ini (pada hari libur guru tidak dihitung ALPA)
                 const prevCount = this.mockData.riwayat.length;
                 this.mockData.riwayat = this.mockData.riwayat.filter(r => {
-                    const isSysAlpa = r.tanggal === tglStr && (r.status || '').toUpperCase() === 'ALPA' && (r.keterangan || '').includes('Sistem');
-                    if (isSysAlpa) {
-                        const docId = `${checkYear}${checkMonth.toString().padStart(2, '0')}${d.toString().padStart(2, '0')}_${r.nip}`;
-                        try { if (typeof db !== 'undefined') db.collection('presensi_guru').doc(docId).delete(); } catch(e){}
+                    const isAlpa = r.tanggal === tglStr && (r.status || '').toUpperCase() === 'ALPA';
+                    if (isAlpa) {
+                        const targetNips = [r.nip].filter(Boolean);
+                        targetNips.forEach(tNip => {
+                            const docId = `${checkYear}${checkMonth.toString().padStart(2, '0')}${d.toString().padStart(2, '0')}_${tNip}`;
+                            try { if (typeof db !== 'undefined') db.collection('presensi_guru').doc(docId).delete(); } catch(e){}
+                        });
                     }
-                    return !isSysAlpa;
+                    return !isAlpa;
                 });
                 if (this.mockData.riwayat.length !== prevCount) {
                     hasChanges = true;
@@ -1881,12 +1964,18 @@ var app = {
                                 (r.namaGuru && myNama && r.namaGuru.trim().toLowerCase() === myNama.trim().toLowerCase());
                 if(matchMe && (r.tanggal || '').endsWith(currentMonthStr)) {
                     const s = (r.status || '').toUpperCase();
-                    if(s === 'HADIR' || s === 'SELESAI' || s === 'DI LUAR LOKASI') myHadir++;
-                    else if(s.includes('TERLAMBAT')) myTerlambat++;
-                    else if(s === 'IZIN') myIzin++;
-                    else if(s === 'SAKIT') mySakit++;
-                    else if(s === 'CUTI') myCuti++;
-                    else if(s === 'ALPA') myAlpa++;
+                    const isLibur = this.isTanggalLibur(r.tanggal);
+                    if(s === 'HADIR' || s === 'SELESAI' || s === 'DI LUAR LOKASI') {
+                        myHadir++;
+                    } else if(s.includes('TERLAMBAT')) {
+                        myTerlambat++;
+                    } else if(!isLibur) {
+                        // Pada hari libur tidak terhitung alpha / izin / sakit / cuti
+                        if(s === 'IZIN') myIzin++;
+                        else if(s === 'SAKIT') mySakit++;
+                        else if(s === 'CUTI') myCuti++;
+                        else if(s === 'ALPA') myAlpa++;
+                    }
                 }
             });
 
@@ -2915,9 +3004,6 @@ var app = {
         try {
             if (typeof db !== 'undefined') {
                 db.collection('pengaturan').doc('sekolah').set(this.mockData.schoolSettings, { merge: true });
-                db.collection('appData').doc('mainState').set({
-                    schoolSettings: this.mockData.schoolSettings
-                }, { merge: true }).catch(e => console.warn('Sync mainState liburMingguan:', e));
             }
         } catch(e) {}
 
@@ -2968,14 +3054,17 @@ var app = {
         try { 
             if (typeof db !== 'undefined') {
                 db.collection('pengaturan').doc('sekolah').set(this.mockData.schoolSettings, { merge: true });
-                db.collection('appData').doc('mainState').set({
-                    schoolSettings: this.mockData.schoolSettings
-                }, { merge: true }).catch(e => console.warn('Sync mainState hariLibur:', e));
             }
         } catch(e) {}
         
         this.renderHariLibur();
+        
+        // Evaluasi alpa untuk bulan hari libur tersebut & bulan berjalan
+        const liburMonth = Number(parts[1]);
+        const liburYear = Number(parts[0]);
+        this.autoGenerateAlpa(liburMonth, liburYear);
         this.autoGenerateAlpa();
+
         if (input) input.value = '';
         if (ketInput) ketInput.value = '';
         this.showToast('Hari libur berhasil ditambahkan: ' + formattedDate, 'check_circle', 'text-green-400');
@@ -2984,6 +3073,7 @@ var app = {
     hapusHariLibur(index) {
         if (confirm('Yakin ingin menghapus tanggal libur ini?')) {
             if (!this.mockData.schoolSettings || !this.mockData.schoolSettings.hariLibur) return;
+            const deletedItem = this.mockData.schoolSettings.hariLibur[index];
             this.mockData.schoolSettings.hariLibur.splice(index, 1);
             localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
             
@@ -2991,13 +3081,19 @@ var app = {
             try { 
                 if (typeof db !== 'undefined') {
                     db.collection('pengaturan').doc('sekolah').set(this.mockData.schoolSettings, { merge: true });
-                    db.collection('appData').doc('mainState').set({
-                        schoolSettings: this.mockData.schoolSettings
-                    }, { merge: true }).catch(e => console.warn('Sync mainState hapusHariLibur:', e));
                 }
             } catch(e) {}
             
             this.renderHariLibur();
+            if (deletedItem) {
+                const tglStr = typeof deletedItem === 'string' ? deletedItem : (deletedItem.tanggal || '');
+                if (tglStr && tglStr.includes('/')) {
+                    const parts = tglStr.split('/');
+                    if (parts.length === 3) {
+                        this.autoGenerateAlpa(Number(parts[1]), Number(parts[2]));
+                    }
+                }
+            }
             this.autoGenerateAlpa();
             this.showToast('Hari libur dihapus', 'check_circle', 'text-green-400');
         }
@@ -3423,7 +3519,10 @@ var app = {
                 .filter(r => {
                     const matchUser = (r.nip && (r.nip === myNip || r.nip === userInfo.nip || r.nip === userInfo.username)) || 
                                       (r.namaGuru && myNama && r.namaGuru.trim().toLowerCase() === myNama.trim().toLowerCase());
-                    return matchUser && (r.tanggal || '').endsWith(filterMonthStr);
+                    if (!matchUser || !(r.tanggal || '').endsWith(filterMonthStr)) return false;
+                    const isAlpa = (r.status || '').toUpperCase() === 'ALPA';
+                    if (isAlpa && this.isTanggalLibur(r.tanggal)) return false;
+                    return true;
                 })
                 .sort((a,b) => {
                     const dateA = (a.tanggal || '').split('/').reverse().join('');
@@ -3491,12 +3590,19 @@ var app = {
                                   (r.namaGuru && guru.nama && r.namaGuru.trim().toLowerCase() === guru.nama.trim().toLowerCase());
                 if(matchGuru && (r.tanggal || '').endsWith(filterMonthStr)) {
                     const stat = (r.status || '').toUpperCase();
-                    if(stat === 'HADIR' || stat === 'SELESAI' || stat === 'DI LUAR LOKASI') hadir++;
-                    else if(stat.includes('TERLAMBAT')) terlambat++;
-                    else if(stat === 'IZIN') izin++;
-                    else if(stat === 'SAKIT') sakit++;
-                    else if(stat === 'CUTI') cuti++;
-                    else if(stat === 'ALPA') alpa++;
+                    const isLibur = this.isTanggalLibur(r.tanggal);
+
+                    if(stat === 'HADIR' || stat === 'SELESAI' || stat === 'DI LUAR LOKASI') {
+                        hadir++;
+                    } else if(stat.includes('TERLAMBAT')) {
+                        terlambat++;
+                    } else if(!isLibur) {
+                        // Pada hari libur tidak terhitung alpa / izin / sakit / cuti
+                        if(stat === 'IZIN') izin++;
+                        else if(stat === 'SAKIT') sakit++;
+                        else if(stat === 'CUTI') cuti++;
+                        else if(stat === 'ALPA') alpa++;
+                    }
                 }
             });
             return {
@@ -3521,6 +3627,7 @@ var app = {
         
         const now = new Date();
         const tglString = `${now.getDate().toString().padStart(2, '0')}/${(now.getMonth()+1).toString().padStart(2, '0')}/${now.getFullYear()}`;
+        const isTodayLibur = this.isTanggalLibur(now);
         
         const presensiHariIni = (this.mockData.riwayat || []).filter(r => r.tanggal === tglString);
         
@@ -3529,13 +3636,13 @@ var app = {
             return s.includes('HADIR') || s.includes('TERLAMBAT') || s.includes('SELESAI') || s.includes('DI LUAR LOKASI');
         }).length;
         const terlambat = presensiHariIni.filter(r => (r.status || '').toUpperCase().includes('TERLAMBAT')).length;
-        const alpaHariIni = presensiHariIni.filter(r => (r.status || '').toUpperCase() === 'ALPA').length;
-        const izinHariIni = presensiHariIni.filter(r => {
+        const alpaHariIni = isTodayLibur ? 0 : presensiHariIni.filter(r => (r.status || '').toUpperCase() === 'ALPA').length;
+        const izinHariIni = isTodayLibur ? 0 : presensiHariIni.filter(r => {
             const s = (r.status || '').toUpperCase();
             return s === 'IZIN' || s === 'SAKIT' || s === 'CUTI';
         }).length;
 
-        const belumPresensi = Math.max(0, totalGuru - sudahPresensi - alpaHariIni - izinHariIni);
+        const belumPresensi = isTodayLibur ? 0 : Math.max(0, totalGuru - sudahPresensi - alpaHariIni - izinHariIni);
 
         const setEl = (id, val) => { if(document.getElementById(id)) document.getElementById(id).innerText = val; };
         setEl('admin-stat-total', totalGuru);
@@ -3879,6 +3986,13 @@ var app = {
         
         let filteredRiwayat = (this.mockData.riwayat || []).slice();
         
+        // Abaikan entri ALPA jika tanggal tersebut adalah hari libur (mingguan atau khusus)
+        filteredRiwayat = filteredRiwayat.filter(r => {
+            const isAlpa = (r.status || '').toUpperCase() === 'ALPA';
+            if (isAlpa && this.isTanggalLibur(r.tanggal)) return false;
+            return true;
+        });
+
         if (filterBulan && filterTahun) {
             filteredRiwayat = filteredRiwayat.filter(r => (r.tanggal || '').endsWith(filterMonthStr));
         }
@@ -4024,6 +4138,10 @@ var app = {
                     // Hindari loop tak berujung jika data salah
                     if (startDate <= endDate) {
                         for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+                            // Jangan catat izin/sakit/cuti pada hari libur (kecuali jenis KOREKSI)
+                            if (item.jenis !== 'KOREKSI' && this.isTanggalLibur(d)) {
+                                continue;
+                            }
                             const tglString = `${d.getDate().toString().padStart(2, '0')}/${(d.getMonth()+1).toString().padStart(2, '0')}/${d.getFullYear()}`;
                             const yyyy = d.getFullYear();
                             const mm = String(d.getMonth() + 1).padStart(2, '0');
