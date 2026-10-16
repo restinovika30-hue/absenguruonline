@@ -24,7 +24,7 @@
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#16a34a">
     <script>
-        if ('serviceWorker' in navigator) {
+        if ('serviceWorker' in navigator && (location.protocol === 'http:' || location.protocol === 'https:')) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('sw.js').catch(err => {
                     console.log('ServiceWorker registration failed: ', err);
@@ -614,12 +614,12 @@ input[type="file"]::file-selector-button:hover {
     <script>
         // GANTI KONFIGURASI INI DENGAN FIREBASE PROJECT ANDA
         const firebaseConfig = {
-            apiKey: "AIzaSyAXTS36pTOIRVXAJ6PMkqbuUihMNy_49fE",
-            authDomain: "absenguruonline-bada0.firebaseapp.com",
-            projectId: "absenguruonline-bada0",
-            storageBucket: "absenguruonline-bada0.firebasestorage.app",
-            messagingSenderId: "399770094333",
-            appId: "1:399770094333:web:3d69c71f05fa47cd660c94"
+            apiKey: "AIzaSyDL2IQTkYxcRl4XmEoOgf76CVVbj9qr6z0",
+            authDomain: "absensiguru-268d9.firebaseapp.com",
+            projectId: "absensiguru-268d9",
+            storageBucket: "absensiguru-268d9.firebasestorage.app",
+            messagingSenderId: "1014685328974",
+            appId: "1:1014685328974:web:031c9d916a8b3605ca051f"
         };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
@@ -755,27 +755,7 @@ var app = {
                             ...fbData
                         };
 
-                        // Pertahankan data yang dikelola pada koleksi Firestore tersendiri jika di mainState kosong/dihapus
-                        if (localJurnal && localJurnal.length > 0) {
-                            if (!fbData.jurnal || fbData.jurnal.length === 0) {
-                                this.mockData.jurnal = localJurnal;
-                            }
-                        }
-                        if (localIzin && localIzin.length > 0) {
-                            if (!fbData.izinAdmin || fbData.izinAdmin.length === 0) {
-                                this.mockData.izinAdmin = localIzin;
-                            }
-                        }
-                        if (localSlip && localSlip.length > 0) {
-                            if (!fbData.slipGaji || fbData.slipGaji.length === 0) {
-                                this.mockData.slipGaji = localSlip;
-                            }
-                        }
-                        if (localRiwayat && localRiwayat.length > 0) {
-                            if (!fbData.riwayat || fbData.riwayat.length === 0) {
-                                this.mockData.riwayat = localRiwayat;
-                            }
-                        }
+                        // Pertahankan data guru jika di mainState belum ada
                         if (localDataGuru && localDataGuru.length > 0) {
                             if (!fbData.dataGuru || fbData.dataGuru.length === 0) {
                                 this.mockData.dataGuru = localDataGuru;
@@ -853,28 +833,25 @@ var app = {
             // TAHAP 1: Mendengarkan koleksi presensi_guru yang baru
             db.collection('presensi_guru').onSnapshot((snapshot) => {
                 let koleksiRiwayat = [];
-                snapshot.forEach(doc => koleksiRiwayat.push(doc.data()));
+                if (snapshot) {
+                    snapshot.forEach(doc => {
+                        const d = doc.data();
+                        if (d && !d.isDeleted) koleksiRiwayat.push(d);
+                    });
+                }
                 
-                // Ambil riwayat lama dari mainState (sebagai arsip)
-                let riwayatLama = this.mockData.riwayatLamaMainState || this.mockData.riwayat || [];
-                if (!this.mockData.riwayatLamaMainState) this.mockData.riwayatLamaMainState = riwayatLama;
-                
-                // Gabungkan dan hilangkan duplikat (koleksi baru menimpa yang lama jika ada overlap)
-                let map = new Map();
-                riwayatLama.forEach(r => map.set(r.tanggal + '_' + r.nip, r));
-                koleksiRiwayat.forEach(r => map.set(r.tanggal + '_' + r.nip, r));
-                
-                // Urutkan berdasarkan tanggal terbaru di atas
-                this.mockData.riwayat = Array.from(map.values()).sort((a,b) => {
+                // Gunakan koleksiRiwayat dari Firestore sebagai data aktual
+                this.mockData.riwayat = koleksiRiwayat.sort((a,b) => {
                     let dateA = (a.tanggal || '').split('/').reverse().join('');
                     let dateB = (b.tanggal || '').split('/').reverse().join('');
                     return dateB.localeCompare(dateA);
                 });
+                delete this.mockData.riwayatLamaMainState;
                 
                 // Simpan ke lokal agar tetap responsif saat direfresh
                 localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
                 
-                // Refresh tampilan jika admin sedang membuka halaman rekap
+                // Refresh tampilan jika admin sedang membuka halaman rekap/riwayat
                 if (this.state) {
                     if (this.state.currentScreen === 'admin-dashboard' && typeof this.loadDashboardAdmin === 'function') this.loadDashboardAdmin();
                     if (this.state.currentScreen === 'admin-rekap' && typeof this.loadRekapAdmin === 'function') this.loadRekapAdmin();
@@ -957,13 +934,15 @@ var app = {
             // TAHAP 3: Mendengarkan koleksi izin_guru
             db.collection('izin_guru').onSnapshot((snapshot) => {
                 let koleksi = [];
-                snapshot.forEach(doc => koleksi.push(doc.data()));
-                let lama = this.mockData.izinLamaMainState || this.mockData.izinAdmin || [];
-                if (!this.mockData.izinLamaMainState) this.mockData.izinLamaMainState = lama;
-                let map = new Map();
-                lama.forEach(d => map.set(d.id, d));
-                koleksi.forEach(d => { if (d.isDeleted) map.delete(d.id); else map.set(d.id, d); });
-                this.mockData.izinAdmin = Array.from(map.values()).sort((a,b) => b.timestamp - a.timestamp);
+                if (snapshot) {
+                    snapshot.forEach(doc => {
+                        const d = doc.data();
+                        if (d && !d.isDeleted) koleksi.push(d);
+                    });
+                }
+                this.mockData.izinAdmin = koleksi.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
+                this.mockData.izin = this.mockData.izinAdmin;
+                delete this.mockData.izinLamaMainState;
                 localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
                 if (this.state) {
                     if (this.state.currentScreen === 'admin-izin' && typeof this.renderDataIzin === 'function') this.renderDataIzin();
@@ -974,21 +953,14 @@ var app = {
             // TAHAP 3: Mendengarkan koleksi jurnal_guru
             db.collection('jurnal_guru').onSnapshot((snapshot) => {
                 let koleksi = [];
-                snapshot.forEach(doc => koleksi.push(doc.data()));
-                let lama = [
-                    ...(this.mockData.jurnalLamaMainState || []),
-                    ...(this.mockData.jurnal || [])
-                ];
-                if (!this.mockData.jurnalLamaMainState) this.mockData.jurnalLamaMainState = lama;
-                let map = new Map();
-                lama.forEach(d => { if(d && d.id) map.set(d.id, d); });
-                koleksi.forEach(d => { 
-                    if (d && d.id) {
-                        if (d.isDeleted) map.delete(d.id); 
-                        else map.set(d.id, d); 
-                    }
-                });
-                this.mockData.jurnal = Array.from(map.values()).sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
+                if (snapshot) {
+                    snapshot.forEach(doc => {
+                        const d = doc.data();
+                        if (d && !d.isDeleted) koleksi.push(d);
+                    });
+                }
+                this.mockData.jurnal = koleksi.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
+                delete this.mockData.jurnalLamaMainState;
                 localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
                 if (this.state) {
                     if (this.state.currentScreen === 'admin-jurnal' && typeof this.loadJurnalAdmin === 'function') this.loadJurnalAdmin();
@@ -999,16 +971,18 @@ var app = {
             // TAHAP 3: Mendengarkan koleksi slip_gaji
             db.collection('slip_gaji').onSnapshot((snapshot) => {
                 let koleksi = [];
-                snapshot.forEach(doc => koleksi.push(doc.data()));
-                let lama = this.mockData.slipLamaMainState || this.mockData.slipGaji || [];
-                if (!this.mockData.slipLamaMainState) this.mockData.slipLamaMainState = lama;
-                let map = new Map();
-                lama.forEach(d => map.set(d.id, d));
-                koleksi.forEach(d => { if (d.isDeleted) map.delete(d.id); else map.set(d.id, d); });
-                this.mockData.slipGaji = Array.from(map.values()).sort((a,b) => b.timestamp - a.timestamp);
+                if (snapshot) {
+                    snapshot.forEach(doc => {
+                        const d = doc.data();
+                        if (d && !d.isDeleted) koleksi.push(d);
+                    });
+                }
+                this.mockData.slipGaji = koleksi.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0));
+                delete this.mockData.slipLamaMainState;
                 localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
                 if (this.state) {
                     if (this.state.currentScreen === 'admin-slip' && typeof this.renderDataSlip === 'function') this.renderDataSlip();
+                    if (this.state.currentScreen === 'guru-slip-gaji' && typeof this.loadSlipGuru === 'function') this.loadSlipGuru();
                 }
             });
 
@@ -1243,7 +1217,13 @@ var app = {
         let hasChanges = false;
         const activeGurus = this.mockData.dataGuru.filter(g => g.statusAkun === 'AKTIF' || g.statusAkun === 'Aktif');
 
-        for (let d = 1; d <= maxDay; d++) {
+        // Jika bulan ini pernah direset oleh admin, jangan regenerasi ALPA untuk hari sebelum tanggal reset
+        let startDay = 1;
+        if (this.mockData.lastResetYear === checkYear && this.mockData.lastResetMonth === checkMonth && this.mockData.lastResetDay) {
+            startDay = this.mockData.lastResetDay;
+        }
+
+        for (let d = startDay; d <= maxDay; d++) {
             const checkDate = new Date(checkYear, checkMonth - 1, d);
             const tglStr = `${d.toString().padStart(2, '0')}/${checkMonth.toString().padStart(2, '0')}/${checkYear}`;
 
@@ -2670,56 +2650,129 @@ var app = {
         this.renderHariLibur();
     },
 
-    resetDataBulanan() {
-        if(confirm("PERINGATAN KRITIKAL: Apakah Anda yakin ingin MENGHAPUS SEMUA riwayat presensi, izin, jurnal, dan slip gaji secara permanen dari server?\nPastikan Anda sudah mendownload rekap (Excel/PDF) bulan ini sebelum melanjutkan!\n\nData Guru dan Pengaturan TIDAK akan ikut terhapus.")) {
-            
-            this.showToast('Memproses penghapusan data di server...', 'sync', 'text-blue-400');
-            
-            // Hapus dari memori lokal
+    async resetDataBulanan() {
+        if(!confirm("PERINGATAN KRITIKAL: Apakah Anda yakin ingin MENGHAPUS SEMUA riwayat presensi, foto absen, permohonan izin, jurnal mengajar, dan slip gaji secara permanen dari server?\nPastikan Anda sudah mendownload rekap (Excel/PDF) bulan ini sebelum melanjutkan!\n\nProfil Admin, Pengaturan Sekolah, dan Data Guru TIDAK AKAN DIHAPUS.")) {
+            return;
+        }
+
+        const btn = document.querySelector('#pengaturan-tab-reset button');
+        const origBtnHtml = btn ? btn.innerHTML : '';
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = `<span class="material-icons-round text-[20px] animate-spin">sync</span> Mengosongkan database...`;
+        }
+        
+        this.showToast('Memproses penghapusan data di server & database...', 'sync', 'text-blue-400');
+
+        try {
+            // 1. Hapus dari memori lokal dan bersihkan cache arsip lama
             this.mockData.riwayat = [];
             this.mockData.izin = [];
             this.mockData.izinAdmin = [];
             this.mockData.slipGaji = [];
             this.mockData.jurnal = [];
+
+            delete this.mockData.riwayatLamaMainState;
+            delete this.mockData.izinLamaMainState;
+            delete this.mockData.jurnalLamaMainState;
+            delete this.mockData.slipLamaMainState;
+
+            // Catat metadata waktu reset agar autoGenerateAlpa tidak membuat ALPA untuk hari yang sudah direset
+            const now = new Date();
+            this.mockData.lastResetTime = now.toISOString();
+            this.mockData.lastResetDay = now.getDate();
+            this.mockData.lastResetMonth = now.getMonth() + 1;
+            this.mockData.lastResetYear = now.getFullYear();
+
+            // Simpan data bersih ke LocalStorage
             localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
-            
-            // Hapus dari mainState dengan merge: true agar dataGuru dan pengaturan tidak tertimpa/rusak
-            try {
-                if (typeof db !== 'undefined') {
-                    db.collection('appData').doc('mainState').set({
+
+            // 2. Fungsi helper batch delete Firestore
+            const clearCollection = async (collectionName) => {
+                if (typeof db === 'undefined') return;
+                try {
+                    const snapshot = await db.collection(collectionName).get();
+                    if (!snapshot || snapshot.empty) return;
+
+                    let batch = db.batch();
+                    let count = 0;
+                    const promises = [];
+
+                    snapshot.docs.forEach((doc) => {
+                        batch.delete(doc.ref);
+                        count++;
+                        if (count >= 400) {
+                            promises.push(batch.commit());
+                            batch = db.batch();
+                            count = 0;
+                        }
+                    });
+
+                    if (count > 0) {
+                        promises.push(batch.commit());
+                    }
+
+                    await Promise.all(promises);
+                } catch (err) {
+                    console.warn(`Batch delete gagal untuk ${collectionName}, mencoba hapus individual:`, err);
+                    try {
+                        const snapshot = await db.collection(collectionName).get();
+                        if (snapshot && !snapshot.empty) {
+                            await Promise.all(snapshot.docs.map(doc => doc.ref.delete().catch(() => {})));
+                        }
+                    } catch (e) {}
+                }
+            };
+
+            // 3. Eksekusi penghapusan di seluruh koleksi Firestore secara bersamaan
+            await Promise.all([
+                clearCollection('presensi_guru'),
+                clearCollection('izin_guru'),
+                clearCollection('jurnal_guru'),
+                clearCollection('slip_gaji')
+            ]);
+
+            // 4. Hapus juga data operasional dari doc mainState di Firestore
+            if (typeof db !== 'undefined') {
+                try {
+                    await db.collection('appData').doc('mainState').set({
                         riwayat: [],
+                        riwayatLamaMainState: [],
                         izin: [],
                         izinAdmin: [],
+                        izinLamaMainState: [],
                         slipGaji: [],
-                        jurnal: []
+                        slipLamaMainState: [],
+                        jurnal: [],
+                        jurnalLamaMainState: [],
+                        lastResetTime: this.mockData.lastResetTime,
+                        lastResetDay: this.mockData.lastResetDay,
+                        lastResetMonth: this.mockData.lastResetMonth,
+                        lastResetYear: this.mockData.lastResetYear
                     }, { merge: true });
+                } catch (e) {
+                    console.warn('Gagal update mainState:', e);
                 }
-            } catch(e) {}
-            
-            // Fungsi helper untuk menghapus semua isi koleksi
-            const clearCollection = (collectionName) => {
-                try {
-                    if (typeof db !== 'undefined') {
-                        db.collection(collectionName).get().then(snapshot => {
-                            snapshot.forEach(doc => {
-                                doc.ref.delete().catch(e => console.log('Gagal hapus doc', e));
-                            });
-                        }).catch(e => console.log('Gagal fetch koleksi', e));
-                    }
-                } catch(e) {}
-            };
-            
-            // Eksekusi penghapusan di koleksi Firebase yang baru (Tahap 1 & 3)
-            clearCollection('presensi_guru');
-            clearCollection('izin_guru');
-            clearCollection('jurnal_guru');
-            clearCollection('slip_gaji');
-            
-            setTimeout(() => {
-                this.showToast('Data bulanan berhasil direset dari server!', 'check_circle', 'text-green-400');
-                if (this.state.currentScreen === 'admin-rekap' && typeof this.loadRekapAdmin === 'function') this.loadRekapAdmin();
-                else if (this.state.currentScreen === 'admin-guru' && typeof this.loadDataGuru === 'function') this.loadDataGuru();
-            }, 2000);
+            }
+
+            this.showToast('Data bulanan dan database berhasil dikosongkan!', 'check_circle', 'text-green-400');
+
+            // Refresh seluruh tampilan yang relevan
+            if (typeof this.loadDashboardAdmin === 'function') this.loadDashboardAdmin();
+            if (typeof this.loadRekapAdmin === 'function') this.loadRekapAdmin();
+            if (typeof this.loadRiwayatAdmin === 'function') this.loadRiwayatAdmin();
+            if (typeof this.renderDataIzin === 'function') this.renderDataIzin();
+            if (typeof this.loadJurnalAdmin === 'function') this.loadJurnalAdmin();
+            if (typeof this.renderDataSlip === 'function') this.renderDataSlip();
+
+        } catch (error) {
+            console.error('Terjadi kesalahan saat reset data bulanan:', error);
+            this.showToast('Gagal mereset data: ' + error.message, 'error', 'text-red-400');
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = origBtnHtml;
+            }
         }
     },
     
