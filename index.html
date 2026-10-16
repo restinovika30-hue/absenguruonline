@@ -330,7 +330,7 @@ input[type="file"]::file-selector-button:hover {
                     <div>
                         <h2 id="guru-dashboard-nama" class="font-bold text-gray-800 text-lg">Memuat...</h2>
                         <p id="guru-dashboard-nip" class="text-xs text-gray-500 mb-1">NIP: -</p>
-                        <p class="text-xs text-primary font-medium">Guru</p>
+                        <p id="guru-dashboard-jabatan" class="text-xs text-primary font-medium">Guru</p>
                     </div>
                 </div>
 
@@ -614,12 +614,12 @@ input[type="file"]::file-selector-button:hover {
     <script>
         // GANTI KONFIGURASI INI DENGAN FIREBASE PROJECT ANDA
         const firebaseConfig = {
-            apiKey: "AIzaSyAXTS36pTOIRVXAJ6PMkqbuUihMNy_49fE",
-            authDomain: "absenguruonline-bada0.firebaseapp.com",
-            projectId: "absenguruonline-bada0",
-            storageBucket: "absenguruonline-bada0.firebasestorage.app",
-            messagingSenderId: "399770094333",
-            appId: "1:399770094333:web:3d69c71f05fa47cd660c94"
+            apiKey: "AIzaSyDL2IQTkYxcRl4XmEoOgf76CVVbj9qr6z0",
+            authDomain: "absensiguru-268d9.firebaseapp.com",
+            projectId: "absensiguru-268d9",
+            storageBucket: "absensiguru-268d9.firebasestorage.app",
+            messagingSenderId: "1014685328974",
+            appId: "1:1014685328974:web:031c9d916a8b3605ca051f"
         };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.firestore();
@@ -917,6 +917,9 @@ var app = {
                 
                 if (this.state && this.state.currentScreen === 'admin-guru' && typeof this.renderDataGuru === 'function') {
                     this.renderDataGuru();
+                }
+                if (this.state && this.state.currentScreen === 'guru-dashboard' && typeof this.loadDashboardGuruData === 'function' && this.state.currentUser) {
+                    this.loadDashboardGuruData(this.state.currentUser);
                 }
             });
 
@@ -1637,6 +1640,7 @@ var app = {
                                     role: guru.role,
                                     nip: guru.nip,
                                     id: guru.id,
+                                    jabatan: guru.jabatan || 'Guru',
                                     fotoUrl: guru.fotoUrl
                                 }
                             });
@@ -1670,12 +1674,65 @@ var app = {
         this.autoGenerateAlpa();
 
         // Fetch latest data from mockData in case admin updated it
-        const latestGuru = this.mockData?.dataGuru?.find(g => g.username === user.username) || user;
+        const latestGuru = this.mockData?.dataGuru?.find(g => 
+            (g.username && user.username && g.username === user.username) || 
+            (g.id && user.id && g.id === user.id) || 
+            (g.nip && user.nip && g.nip !== '-' && g.nip === user.nip) ||
+            (g.nama && user.nama && g.nama.trim().toLowerCase() === user.nama.trim().toLowerCase())
+        ) || user;
         const profilePicture = latestGuru.fotoUrl || latestGuru.img;
         
         // Update Profil Statis
-        document.getElementById('guru-dashboard-nama').innerText = latestGuru.nama;
-        document.getElementById('guru-dashboard-nip').innerText = `NIP: ${(latestGuru.nip && latestGuru.nip !== '-') ? latestGuru.nip : '-'}`;
+        document.getElementById('guru-dashboard-nama').innerText = latestGuru.nama || user.nama || 'Guru';
+        document.getElementById('guru-dashboard-nip').innerText = `NIP: ${(latestGuru.nip && latestGuru.nip !== '-') ? latestGuru.nip : (user.nip && user.nip !== '-' ? user.nip : '-')}`;
+        const elJabatan = document.getElementById('guru-dashboard-jabatan');
+        if (elJabatan) {
+            elJabatan.innerText = latestGuru.jabatan || user.jabatan || 'Guru';
+        }
+
+        // Sinkronkan session currentUser jika ada perubahan dari admin
+        if (latestGuru && (latestGuru.jabatan !== user.jabatan || latestGuru.nama !== user.nama || latestGuru.nip !== user.nip)) {
+            const updatedUser = { ...user, ...latestGuru };
+            this.state.currentUser = updatedUser;
+            try {
+                localStorage.setItem('user_info', JSON.stringify(updatedUser));
+            } catch(e) {}
+        }
+
+        // Fallback: Ambil data guru langsung dari Firebase data_guru jika jabatan belum sinkron
+        if (typeof db !== 'undefined' && (!latestGuru.jabatan || latestGuru.jabatan === 'Guru')) {
+            const cleanId = user.id || latestGuru.id;
+            const cleanUsername = user.username || latestGuru.username;
+            if (cleanId) {
+                db.collection('data_guru').doc(cleanId).get().then(doc => {
+                    if (doc.exists) {
+                        const d = doc.data();
+                        if (d && d.jabatan) {
+                            if (elJabatan) elJabatan.innerText = d.jabatan;
+                            if (d.nama) document.getElementById('guru-dashboard-nama').innerText = d.nama;
+                            if (d.nip) document.getElementById('guru-dashboard-nip').innerText = `NIP: ${(d.nip && d.nip !== '-') ? d.nip : '-'}`;
+                            const updatedUser = { ...user, ...d };
+                            this.state.currentUser = updatedUser;
+                            try { localStorage.setItem('user_info', JSON.stringify(updatedUser)); } catch(e) {}
+                        }
+                    } else if (cleanUsername) {
+                        db.collection('data_guru').where('username', '==', cleanUsername).limit(1).get().then(snap => {
+                            if (!snap.empty) {
+                                const d = snap.docs[0].data();
+                                if (d && d.jabatan) {
+                                    if (elJabatan) elJabatan.innerText = d.jabatan;
+                                    if (d.nama) document.getElementById('guru-dashboard-nama').innerText = d.nama;
+                                    if (d.nip) document.getElementById('guru-dashboard-nip').innerText = `NIP: ${(d.nip && d.nip !== '-') ? d.nip : '-'}`;
+                                    const updatedUser = { ...user, ...d };
+                                    this.state.currentUser = updatedUser;
+                                    try { localStorage.setItem('user_info', JSON.stringify(updatedUser)); } catch(e) {}
+                                }
+                            }
+                        }).catch(() => {});
+                    }
+                }).catch(() => {});
+            }
+        }
         
         // Sync Pengumuman
         const pengumumanContainer = document.getElementById('guru-dashboard-pengumuman-container');
@@ -5766,6 +5823,12 @@ var app = {
                 // TAHAP 2: Simpan ke koleksi terpisah
                 try { if(typeof db !== 'undefined') db.collection('data_guru').doc(id).set(g, {merge:true}); } catch(e){}
                 
+                // Sinkronkan currentUser jika guru yang diedit sedang login di sesi ini
+                if (this.state && this.state.currentUser && (this.state.currentUser.id === id || this.state.currentUser.username === g.username)) {
+                    this.state.currentUser = { ...this.state.currentUser, ...g };
+                    try { localStorage.setItem('user_info', JSON.stringify(this.state.currentUser)); } catch(e) {}
+                }
+
                 this.showToast('Data guru berhasil diperbarui.', 'check_circle', 'text-green-400');
             }
         } else {
