@@ -24,7 +24,7 @@
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#16a34a">
     <script>
-        if ('serviceWorker' in navigator && (window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+        if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
                 navigator.serviceWorker.register('sw.js').catch(err => {
                     console.log('ServiceWorker registration failed: ', err);
@@ -86,10 +86,9 @@ input:checked ~ .dot {
     opacity: 0;
     transition: opacity 0.2s ease-in-out;
 }
-.screen.active,
-.screen[style*="display: flex"] {
-    display: flex !important;
-    opacity: 1 !important;
+.screen.active {
+    display: flex;
+    opacity: 1;
 }
 
 /* Input file custom */
@@ -262,7 +261,7 @@ input[type="file"]::file-selector-button:hover {
     <div id="app-container" class="w-full h-full bg-bg relative shadow-2xl flex flex-col overflow-hidden transition-all duration-300">
         
         <!-- ==================== SCREEN 1: LOGIN ==================== -->
-        <div id="screen-login" class="screen active bg-white h-full flex flex-col relative max-w-[480px] mx-auto w-full" style="display: flex; opacity: 1;">
+        <div id="screen-login" class="screen active bg-white h-full flex flex-col relative max-w-[480px] mx-auto w-full">
             <div class="bg-primary rounded-b-[40px] pt-16 pb-12 px-6 text-center text-white relative overflow-hidden shadow-lg">
                 <div class="absolute inset-0 opacity-20 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')]"></div>
                 <div class="relative z-10 flex flex-col items-center">
@@ -614,68 +613,17 @@ input[type="file"]::file-selector-button:hover {
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
     <script>
         // GANTI KONFIGURASI INI DENGAN FIREBASE PROJECT ANDA
-        var firebaseConfig = {
-            apiKey: "AIzaSyAXTS36pTOIRVXAJ6PMkqbuUihMNy_49fE",
-            authDomain: "absenguruonline-bada0.firebaseapp.com",
-            projectId: "absenguruonline-bada0",
-            storageBucket: "absenguruonline-bada0.firebasestorage.app",
-            messagingSenderId: "399770094333",
-            appId: "1:399770094333:web:3d69c71f05fa47cd660c94"
+        const firebaseConfig = {
+            apiKey: "AIzaSyDL2IQTkYxcRl4XmEoOgf76CVVbj9qr6z0",
+            authDomain: "absensiguru-268d9.firebaseapp.com",
+            projectId: "absensiguru-268d9",
+            storageBucket: "absensiguru-268d9.firebasestorage.app",
+            messagingSenderId: "1014685328974",
+            appId: "1:1014685328974:web:031c9d916a8b3605ca051f"
         };
-        var db = null;
-        var APP_STORAGE_KEY = 'absenguru_app_data_' + (firebaseConfig.projectId || 'default');
-        try {
-            if (typeof firebase !== 'undefined' && typeof firebase.initializeApp === 'function') {
-                firebase.initializeApp(firebaseConfig);
-                if (typeof firebase.firestore === 'function') {
-                    db = firebase.firestore();
-                }
-            }
-        } catch (e) {
-            console.warn("Firebase offline/local fallback:", e);
-        }
-
-        // Wrapper aman untuk localStorage (mencegah SecurityError pada protocol file:/// di Firefox / private browsing)
-        var safeStorage = {
-            _mem: {},
-            getItem: function(key) {
-                try {
-                    if (typeof window !== 'undefined' && window.localStorage) {
-                        return window.localStorage.getItem(key);
-                    }
-                } catch(e) {}
-                return (key in this._mem) ? this._mem[key] : null;
-            },
-            setItem: function(key, val) {
-                try {
-                    if (typeof window !== 'undefined' && window.localStorage) {
-                        window.localStorage.setItem(key, val);
-                    }
-                } catch(e) {}
-                this._mem[key] = String(val);
-            },
-            removeItem: function(key) {
-                try {
-                    if (typeof window !== 'undefined' && window.localStorage) {
-                        window.localStorage.removeItem(key);
-                    }
-                } catch(e) {}
-                delete this._mem[key];
-            }
-        };
-
-        // Fallback jika window.localStorage diblokir browser
-        try {
-            window.localStorage.getItem('__test__');
-        } catch(e) {
-            try {
-                Object.defineProperty(window, 'localStorage', {
-                    value: safeStorage,
-                    configurable: true,
-                    writable: true
-                });
-            } catch(err) {}
-        }
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+        const APP_STORAGE_KEY = 'absenguru_app_data_' + (firebaseConfig.projectId || 'default');
     </script>
 
     <!-- Script that handles templates, routing, and logic -->
@@ -710,6 +658,7 @@ var app = {
             gunakanLogoKabKota: false,
             logoKabKotaUrl: "",
             hariLibur: [], // Contoh: ['17/08/2026', '25/12/2026']
+            hariLiburMingguan: [0], // 0 = Minggu (libur rutin mingguan)
             kopRekap: {
                 aktif: true,
                 tampilkanAlamat: true,
@@ -763,34 +712,15 @@ var app = {
     // ==========================================
     init() {
         // 1. Memuat dari lokal (terisolasi per projectId)
-        let savedData = null;
-        try {
-            savedData = safeStorage.getItem(APP_STORAGE_KEY) || safeStorage.getItem('absenguru_app_data');
-        } catch (e) {}
-
+        let savedData = localStorage.getItem(APP_STORAGE_KEY);
+        if (!savedData) {
+            savedData = localStorage.getItem('absenguru_app_data');
+        }
         if (savedData) {
             try {
-                const parsed = JSON.parse(savedData);
-                if (parsed && typeof parsed === 'object') {
-                    this.mockData = {
-                        ...this.mockData,
-                        ...parsed,
-                        adminProfile: {
-                            ...(this.mockData.adminProfile || {}),
-                            ...(parsed.adminProfile || {})
-                        },
-                        schoolSettings: {
-                            ...(this.mockData.schoolSettings || {}),
-                            ...(parsed.schoolSettings || {})
-                        },
-                        lokasiDanJamKerja: {
-                            ...(this.mockData.lokasiDanJamKerja || {}),
-                            ...(parsed.lokasiDanJamKerja || {})
-                        }
-                    };
-                }
+                this.mockData = JSON.parse(savedData);
             } catch (e) {
-                console.warn('Gagal memuat data lokal', e);
+                console.error('Gagal memuat data lokal', e);
             }
         }
         if (this.mockData.lokasiDanJamKerja) {
@@ -805,14 +735,13 @@ var app = {
         }
 
         // 2. Mendengarkan perubahan dari Firebase (Sync Real-time)
-        if (typeof db !== 'undefined' && db && typeof db.collection === 'function') {
-            try {
-                db.collection('appData').doc('mainState').onSnapshot((doc) => {
-                    if (doc.exists) {
-                        const fbData = doc.data();
-                        // Cegah loop tak berujung, update lokal jika Firebase punya versi berbeda
-                        if (JSON.stringify(fbData) !== JSON.stringify(this.mockData)) {
-                            const localSchool = this.mockData.schoolSettings || {};
+        try {
+            db.collection('appData').doc('mainState').onSnapshot((doc) => {
+                if (doc.exists) {
+                    const fbData = doc.data();
+                    // Cegah loop tak berujung, update lokal jika Firebase punya versi berbeda
+                    if (JSON.stringify(fbData) !== JSON.stringify(this.mockData)) {
+                        const localSchool = this.mockData.schoolSettings || {};
                         const localAdmin = this.mockData.adminProfile || {};
                         const localLokasi = this.mockData.lokasiDanJamKerja || {};
                         const localJurnal = this.mockData.jurnal || [];
@@ -944,11 +873,6 @@ var app = {
                 
                 // Simpan ke lokal agar tetap responsif saat direfresh
                 localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
-
-                // Evaluasi alpa jika ada guru aktif yang belum presensi
-                if (typeof this.autoGenerateAlpa === 'function') {
-                    this.autoGenerateAlpa();
-                }
                 
                 // Refresh tampilan jika admin sedang membuka halaman rekap
                 if (this.state) {
@@ -990,10 +914,6 @@ var app = {
                 try {
                     localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
                 } catch(e) {}
-
-                if (typeof this.autoGenerateAlpa === 'function') {
-                    this.autoGenerateAlpa();
-                }
                 
                 if (this.state && this.state.currentScreen === 'admin-guru' && typeof this.renderDataGuru === 'function') {
                     this.renderDataGuru();
@@ -1008,18 +928,8 @@ var app = {
                     if (typeof this.applySchoolBrand === 'function') {
                         this.applySchoolBrand();
                     }
-                    if (typeof this.autoGenerateAlpa === 'function') {
-                        this.autoGenerateAlpa();
-                    }
                     if (this.state && this.state.currentScreen === 'admin-pengaturan' && typeof this.renderPengaturan === 'function') {
                         this.renderPengaturan();
-                    }
-                    if (this.state) {
-                        if (this.state.currentScreen === 'admin-dashboard' && typeof this.loadDashboardAdmin === 'function') this.loadDashboardAdmin();
-                        if (this.state.currentScreen === 'admin-rekap' && typeof this.loadRekapAdmin === 'function') this.loadRekapAdmin();
-                        if (this.state.currentScreen === 'admin-riwayat' && typeof this.loadRiwayatAdmin === 'function') this.loadRiwayatAdmin();
-                        if (this.state.currentScreen === 'guru-riwayat' && typeof this.loadRiwayatGuru === 'function') this.loadRiwayatGuru();
-                        if (this.state.currentScreen === 'guru-dashboard' && typeof this.loadDashboardGuruData === 'function' && this.state.currentUser) this.loadDashboardGuruData(this.state.currentUser);
                     }
                 }
             });
@@ -1100,310 +1010,378 @@ var app = {
             });
 
         } catch (e) {
-            console.warn("Firebase tidak terhubung / berjalan offline:", e);
+            console.error("Firebase tidak terinisialisasi dengan benar", e);
         }
-        } // akhir pengecekan db
         
         // 3. Auto-save perubahan dari sisi pengguna ke Firebase
         let lastSavedDataString = JSON.stringify(this.mockData);
         setInterval(() => {
-            try {
-                const currentDataString = JSON.stringify(this.mockData);
+            const currentDataString = JSON.stringify(this.mockData);
+            
+            // Simpan ke lokal
+            if (currentDataString !== lastSavedDataString) {
+                localStorage.setItem(APP_STORAGE_KEY, currentDataString);
                 
-                // Simpan ke lokal
-                if (currentDataString !== lastSavedDataString) {
-                    safeStorage.setItem(APP_STORAGE_KEY, currentDataString);
-                    
-                    // Hapus data yang sudah memiliki koleksi sendiri agar tidak memperbesar mainState
-                    let dataToSave = JSON.parse(currentDataString);
-                    delete dataToSave.riwayat;
-                    delete dataToSave.riwayatLamaMainState;
-                    delete dataToSave.dataGuru;
-                    delete dataToSave.dataGuruLamaMainState;
-                    delete dataToSave.schoolSettings;
-                    
-                    // TAHAP 3: Hapus data yang sudah memiliki koleksi sendiri
-                    delete dataToSave.izinAdmin;
-                    delete dataToSave.izinLamaMainState;
-                    delete dataToSave.izin;
-                    delete dataToSave.jurnal;
-                    delete dataToSave.jurnalLamaMainState;
-                    delete dataToSave.slipGaji;
-                    delete dataToSave.slipLamaMainState;
+                // Hapus data yang sudah memiliki koleksi sendiri agar tidak memperbesar mainState
+                let dataToSave = JSON.parse(currentDataString);
+                delete dataToSave.riwayat;
+                delete dataToSave.riwayatLamaMainState;
+                delete dataToSave.dataGuru;
+                delete dataToSave.dataGuruLamaMainState;
+                delete dataToSave.schoolSettings;
+                
+                // TAHAP 3: Hapus data yang sudah memiliki koleksi sendiri
+                delete dataToSave.izinAdmin;
+                delete dataToSave.izinLamaMainState;
+                delete dataToSave.izin;
+                delete dataToSave.jurnal;
+                delete dataToSave.jurnalLamaMainState;
+                delete dataToSave.slipGaji;
+                delete dataToSave.slipLamaMainState;
 
-                    // Simpan ke Firebase hanya jika ada perubahan (Dan hanya dilakukan oleh Admin)
-                    const userInfo = JSON.parse(safeStorage.getItem('user_info') || '{}');
-                    if (userInfo.role && userInfo.role.toUpperCase() === 'ADMIN') {
-                        try {
-                            if (typeof db !== 'undefined' && db && typeof db.collection === 'function') {
-                                db.collection('appData').doc('mainState').set(dataToSave, { merge: true })
-                                    .catch(e => console.warn("Sync Firebase warning:", e));
-                            }
-                        } catch (e) {}
-                    }
-                    
-                    lastSavedDataString = currentDataString;
+                // Simpan ke Firebase hanya jika ada perubahan (Dan hanya dilakukan oleh Admin)
+                // Ini mencegah masalah contention (antrean) ketika ratusan guru absen bersamaan
+                const userInfo = JSON.parse(localStorage.getItem('user_info') || '{}');
+                if (userInfo.role && userInfo.role.toUpperCase() === 'ADMIN') {
+                    try {
+                        if (typeof db !== 'undefined') {
+                            db.collection('appData').doc('mainState').set(dataToSave, { merge: true })
+                                .catch(e => console.error("Gagal simpan ke Firebase", e));
+                        }
+                    } catch (e) {}
                 }
-            } catch(e) {}
+                
+                lastSavedDataString = currentDataString;
+            }
         }, 2000);
 
-        try {
-            this.injectTemplates();
-        } catch(e) {
-            console.error('Error in injectTemplates:', e);
+        this.injectTemplates();
+        if (typeof this.applySchoolBrand === 'function') {
+            this.applySchoolBrand();
+        }
+        if (typeof this.renderPengaturanLokasi === 'function') {
+            this.renderPengaturanLokasi();
         }
 
-        try {
-            if (typeof this.applySchoolBrand === 'function') {
-                this.applySchoolBrand();
-            }
-        } catch(e) {}
+        this.autoGenerateAlpa();
 
-        try {
-            if (typeof this.renderPengaturanLokasi === 'function') {
-                this.renderPengaturanLokasi();
-            }
-        } catch(e) {}
-
-        try {
-            this.autoGenerateAlpa();
-        } catch(e) {
-            console.warn('Alpa check warning:', e);
-        }
-
-        // Periodik cek jam pulang untuk alpa otomatis setiap 60 detik
+        // Auto-evaluasi ALPA secara berkala saat aplikasi aktif
         setInterval(() => {
             try {
-                if (this.mockData && this.mockData.dataGuru && this.mockData.dataGuru.length > 0) {
-                    const changed = this.autoGenerateAlpa();
-                    if (changed && this.state) {
-                        if (this.state.currentScreen === 'admin-dashboard' && typeof this.loadDashboardAdmin === 'function') this.loadDashboardAdmin();
-                        else if (this.state.currentScreen === 'guru-dashboard' && typeof this.loadDashboardGuruData === 'function' && this.state.currentUser) this.loadDashboardGuruData(this.state.currentUser);
-                        else if (this.state.currentScreen === 'admin-rekap' && typeof this.loadRekapAdmin === 'function') this.loadRekapAdmin();
-                        else if (this.state.currentScreen === 'admin-riwayat' && typeof this.loadRiwayatAdmin === 'function') this.loadRiwayatAdmin();
-                        else if (this.state.currentScreen === 'guru-riwayat' && typeof this.loadRiwayatGuru === 'function') this.loadRiwayatGuru();
-                    }
+                if (this.state && (this.state.currentScreen === 'admin-dashboard' || this.state.currentScreen === 'guru-dashboard')) {
+                    this.autoGenerateAlpa();
+                    if (this.state.currentScreen === 'admin-dashboard' && typeof this.loadDashboardAdmin === 'function') this.loadDashboardAdmin();
+                    else if (this.state.currentScreen === 'guru-dashboard' && typeof this.loadDashboardGuruData === 'function' && this.state.currentUser) this.loadDashboardGuruData(this.state.currentUser);
                 }
-            } catch(e) {}
-        }, 60000);
-
-        try {
-            const token = safeStorage.getItem('session_token');
-            const userStr = safeStorage.getItem('user_info');
-            if (token && userStr) {
-                const user = JSON.parse(userStr);
-                this.state.currentUser = user;
-                if (user && user.role === 'ADMIN') {
-                    this.navigate('admin-dashboard');
-                } else {
-                    this.navigate('guru-dashboard');
-                }
-            } else {
-                this.navigate('login');
+            } catch (e) {
+                console.warn('Interval autoGenerateAlpa error:', e);
             }
-        } catch(e) {
-            console.warn('Session check error, defaulting to login screen:', e);
+        }, 30000);
+
+        const token = localStorage.getItem('session_token');
+        const userStr = localStorage.getItem('user_info');
+        if (token && userStr) {
+            const user = JSON.parse(userStr);
+            this.state.currentUser = user;
+            if (user.role === 'ADMIN') {
+                this.navigate('admin-dashboard');
+            } else {
+                this.navigate('guru-dashboard');
+            }
+        } else {
             this.navigate('login');
         }
     },
 
-    autoGenerateAlpa() {
-        if (!this.mockData || !this.mockData.dataGuru || !this.mockData.riwayat) return false;
+    // ==========================================
+    // LOGIKA PENETAPAN ALPA OTOMATIS & LIBUR
+    // ==========================================
+    formatDateDDMMYYYY(date) {
+        const d = date.getDate().toString().padStart(2, '0');
+        const m = (date.getMonth() + 1).toString().padStart(2, '0');
+        const y = date.getFullYear();
+        return `${d}/${m}/${y}`;
+    },
+
+    isHariLiburMingguan(date) {
+        const dayOfWeek = date.getDay(); // 0 = Minggu, 1 = Senin, ..., 6 = Sabtu
+        const liburMingguan = (this.mockData.schoolSettings && this.mockData.schoolSettings.hariLiburMingguan) || [0];
+        return liburMingguan.includes(dayOfWeek);
+    },
+
+    isHariLiburKhusus(date) {
+        const tglStr = this.formatDateDDMMYYYY(date);
+        const ymdStr = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date.getDate().toString().padStart(2, '0')}`;
+        const listLibur = (this.mockData.schoolSettings && this.mockData.schoolSettings.hariLibur) || [];
+        return listLibur.some(item => {
+            if (typeof item === 'string') {
+                return item === tglStr || item === ymdStr;
+            } else if (item && typeof item === 'object') {
+                return item.tanggal === tglStr || item.tanggal === ymdStr;
+            }
+            return false;
+        });
+    },
+
+    isDateInRange(targetDate, startDateStr, endDateStr) {
+        if (!startDateStr || !endDateStr) return false;
+        const parseD = (s) => {
+            if (!s) return null;
+            if (typeof s !== 'string') return new Date(s);
+            if (s.includes('-')) {
+                const parts = s.split('-');
+                if (parts[0].length === 4) return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+            } else if (s.includes('/')) {
+                const parts = s.split('/');
+                if (parts[2].length === 4) return new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+            }
+            const d = new Date(s);
+            return isNaN(d) ? null : d;
+        };
+        const sDate = parseD(startDateStr);
+        const eDate = parseD(endDateStr);
+        if (!sDate || !eDate) return false;
+
+        const t = new Date(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate()).getTime();
+        const start = new Date(sDate.getFullYear(), sDate.getMonth(), sDate.getDate()).getTime();
+        const end = new Date(eDate.getFullYear(), eDate.getMonth(), eDate.getDate()).getTime();
+        return t >= start && t <= end;
+    },
+
+    hasValidPresensiMasuk(guru, tglStr) {
+        const nip = guru.username || guru.nip;
+        const nama = guru.nama;
+        const riwayatList = this.mockData.riwayat || [];
+        return riwayatList.some(r => {
+            const matchGuru = (r.nip && (r.nip === nip || r.nip === guru.nip || r.nip === guru.username)) || 
+                              (r.namaGuru && nama && r.namaGuru.trim().toLowerCase() === nama.trim().toLowerCase());
+            if (!matchGuru || r.tanggal !== tglStr) return false;
+            
+            const stat = (r.status || '').toUpperCase();
+            if (stat === 'ALPA') return false;
+            if (stat.includes('HADIR') || stat.includes('TERLAMBAT') || stat.includes('SELESAI') || stat.includes('DI LUAR LOKASI')) {
+                return true;
+            }
+            const jm = r.jamMasuk || r.jam_masuk;
+            if (jm && jm !== '--:--' && jm !== '-' && jm !== '') {
+                return true;
+            }
+            return false;
+        });
+    },
+
+    hasApprovedIzinSakitCuti(guru, date, tglStr) {
+        const nip = guru.username || guru.nip;
+        const nama = guru.nama;
+        
+        // 1. Cek dari riwayat
+        const riwayatList = this.mockData.riwayat || [];
+        const inRiwayat = riwayatList.some(r => {
+            const matchGuru = (r.nip && (r.nip === nip || r.nip === guru.nip || r.nip === guru.username)) || 
+                              (r.namaGuru && nama && r.namaGuru.trim().toLowerCase() === nama.trim().toLowerCase());
+            if (!matchGuru || r.tanggal !== tglStr) return false;
+            const s = (r.status || '').toUpperCase();
+            return s === 'IZIN' || s === 'SAKIT' || s === 'CUTI';
+        });
+        if (inRiwayat) return true;
+
+        // 2. Cek dari izinAdmin / izin
+        const allIzin = [...(this.mockData.izinAdmin || []), ...(this.mockData.izin || [])];
+        return allIzin.some(item => {
+            const matchGuru = (item.nip && (item.nip === nip || item.nip === guru.nip || item.nip === guru.username)) ||
+                              (item.nama && nama && item.nama.trim().toLowerCase() === nama.trim().toLowerCase());
+            if (!matchGuru) return false;
+            const status = (item.status || '').toUpperCase();
+            if (status !== 'DISETUJUI') return false;
+            const jenis = (item.jenis || '').toUpperCase();
+            if (jenis !== 'IZIN' && jenis !== 'SAKIT' && jenis !== 'CUTI') return false;
+            return this.isDateInRange(date, item.tglMulai, item.tglSelesai);
+        });
+    },
+
+    hasPendingPengajuan(guru, date) {
+        const nip = guru.username || guru.nip;
+        const nama = guru.nama;
+        const allIzin = [...(this.mockData.izinAdmin || []), ...(this.mockData.izin || [])];
+        return allIzin.some(item => {
+            const matchGuru = (item.nip && (item.nip === nip || item.nip === guru.nip || item.nip === guru.username)) ||
+                              (item.nama && nama && item.nama.trim().toLowerCase() === nama.trim().toLowerCase());
+            if (!matchGuru) return false;
+            const status = (item.status || '').toUpperCase();
+            const isPending = (status === 'MENUNGGU' || status === 'PENDING' || status.includes('MENUNGGU'));
+            if (!isPending) return false;
+            return this.isDateInRange(date, item.tglMulai, item.tglSelesai);
+        });
+    },
+
+    autoGenerateAlpa(targetMonth, targetYear) {
+        if (!this.mockData || !this.mockData.dataGuru || !this.mockData.riwayat) return;
 
         const now = new Date();
-        const year = now.getFullYear();
-        const month = now.getMonth();
-        const todayDate = now.getDate();
-        const currentTotalMinutes = (now.getHours() * 60) + now.getMinutes();
-        
-        const schoolSettings = this.mockData.schoolSettings || {};
-        const rawHariLibur = schoolSettings.hariLibur || [];
-        const sabtuLibur = !!schoolSettings.sabtuLibur;
+        const currentYear = now.getFullYear();
+        const currentMonth = now.getMonth() + 1; // 1-12
+        const currentDay = now.getDate();
+        const currentHour = now.getHours();
+        const currentMin = now.getMinutes();
+        const currentTotalMin = (currentHour * 60) + currentMin;
 
-        // Helper untuk ekstrak string tanggal 'DD/MM/YYYY'
-        const getLiburDateStr = (item) => {
-            if (!item) return '';
-            if (typeof item === 'string') return item;
-            return item.tanggal || '';
-        };
-        const listTglLibur = rawHariLibur.map(getLiburDateStr).filter(Boolean);
+        const checkYear = targetYear ? Number(targetYear) : currentYear;
+        const checkMonth = targetMonth ? Number(targetMonth) : currentMonth;
 
-        // Helper cek apakah suatu tanggal adalah hari libur (Minggu, Sabtu jika sabtuLibur, atau tanggal merah)
-        const isTanggalLibur = (checkDate, tglString) => {
-            const dayOfWeek = checkDate.getDay();
-            if (dayOfWeek === 0) return true; // Minggu selalu libur
-            if (dayOfWeek === 6 && sabtuLibur) return true; // Sabtu libur jika diaktifkan
-            if (listTglLibur.includes(tglString)) return true; // Tanggal merah dari pengaturan
-            return false;
-        };
+        // Jangan proses bulan di masa depan
+        if (checkYear > currentYear || (checkYear === currentYear && checkMonth > currentMonth)) {
+            return;
+        }
+
+        const isCurrentMonth = (checkYear === currentYear && checkMonth === currentMonth);
+        const totalDaysInMonth = new Date(checkYear, checkMonth, 0).getDate();
+        const maxDay = isCurrentMonth ? currentDay : totalDaysInMonth;
 
         let hasChanges = false;
-        const alpaDocsToSave = [];
-        const alpaDocsToDelete = [];
+        const activeGurus = this.mockData.dataGuru.filter(g => g.statusAkun === 'AKTIF' || g.statusAkun === 'Aktif');
 
-        // 1. Bersihkan ALPA otomatis jika tanggal tersebut kini menjadi Hari Libur / Tanggal Merah
-        const riwayatSebelum = this.mockData.riwayat.length;
-        const riwayatDibersihkan = [];
-        this.mockData.riwayat.forEach(r => {
-            if ((r.status || '').toUpperCase() === 'ALPA') {
-                const parts = (r.tanggal || '').split('/');
-                if (parts.length === 3) {
-                    const d = parseInt(parts[0], 10);
-                    const m = parseInt(parts[1], 10) - 1;
-                    const y = parseInt(parts[2], 10);
-                    const dateObj = new Date(y, m, d);
-                    if (isTanggalLibur(dateObj, r.tanggal)) {
+        for (let d = 1; d <= maxDay; d++) {
+            const checkDate = new Date(checkYear, checkMonth - 1, d);
+            const tglStr = `${d.toString().padStart(2, '0')}/${checkMonth.toString().padStart(2, '0')}/${checkYear}`;
+
+            // Kondisi 1 & 2: Hari Libur Mingguan
+            const isLiburMingguan = this.isHariLiburMingguan(checkDate);
+            // Kondisi 3 & 4: Tanggal Merah / Hari Libur Khusus / Libur Sekolah
+            const isLiburKhusus = this.isHariLiburKhusus(checkDate);
+
+            // Jika tanggal ini adalah hari libur mingguan atau libur khusus/sekolah:
+            if (isLiburMingguan || isLiburKhusus) {
+                // Bersihkan ALPA sistem jika pernah tercatat sebelumnya di tanggal ini
+                const prevCount = this.mockData.riwayat.length;
+                this.mockData.riwayat = this.mockData.riwayat.filter(r => {
+                    const isSysAlpa = r.tanggal === tglStr && (r.status || '').toUpperCase() === 'ALPA' && (r.keterangan || '').includes('Sistem');
+                    if (isSysAlpa) {
+                        const docId = `${checkYear}${checkMonth.toString().padStart(2, '0')}${d.toString().padStart(2, '0')}_${r.nip}`;
+                        try { if (typeof db !== 'undefined') db.collection('presensi_guru').doc(docId).delete(); } catch(e){}
+                    }
+                    return !isSysAlpa;
+                });
+                if (this.mockData.riwayat.length !== prevCount) {
+                    hasChanges = true;
+                }
+                continue;
+            }
+
+            // Tanggal ini adalah HARI KERJA
+            const isToday = isCurrentMonth && (d === currentDay);
+
+            activeGurus.forEach(guru => {
+                const nip = guru.username || guru.nip || '-';
+                const nama = guru.nama;
+
+                // Helper untuk membersihkan ALPA sistem jika kondisi tidak lagi terpenuhi (misal izin disetujui, ada koreksi, atau jam belum usai)
+                const removeSystemAlpa = () => {
+                    const idx = this.mockData.riwayat.findIndex(r => 
+                        ((r.nip && (r.nip === nip || r.nip === guru.nip || r.nip === guru.username)) || 
+                         (r.namaGuru && nama && r.namaGuru.trim().toLowerCase() === nama.trim().toLowerCase())) && 
+                        r.tanggal === tglStr && (r.status || '').toUpperCase() === 'ALPA'
+                    );
+                    if (idx !== -1) {
+                        this.mockData.riwayat.splice(idx, 1);
                         hasChanges = true;
-                        const docId = `${y}${String(m + 1).padStart(2, '0')}${String(d).padStart(2, '0')}_${r.nip}`;
-                        alpaDocsToDelete.push(docId);
-                        return; // Jangan masukkan ke riwayatDibersihkan
+                        const docId = `${checkYear}${checkMonth.toString().padStart(2, '0')}${d.toString().padStart(2, '0')}_${nip}`;
+                        try { if (typeof db !== 'undefined') db.collection('presensi_guru').doc(docId).delete(); } catch(e){}
                     }
-                }
-            }
-            riwayatDibersihkan.push(r);
-        });
-        if (riwayatDibersihkan.length !== riwayatSebelum) {
-            this.mockData.riwayat = riwayatDibersihkan;
-        }
+                };
 
-        // Ambil data izin yang sudah disetujui untuk mengecek izin guru
-        const izinAdmin = this.mockData.izinAdmin || [];
-        const izinDisetujui = izinAdmin.filter(i => (i.status || '').toUpperCase() === 'DISETUJUI');
-
-        const isGuruAdaIzin = (guru, checkDate) => {
-            return izinDisetujui.some(i => {
-                const match = (i.nip === guru.username || i.nip === guru.nip || (guru.nama && i.nama === guru.nama));
-                if (!match) return false;
-                if (!i.tglMulai || !i.tglSelesai) return false;
-                const start = new Date(i.tglMulai);
-                const end = new Date(i.tglSelesai);
-                const target = new Date(checkDate.getFullYear(), checkDate.getMonth(), checkDate.getDate());
-                const s = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-                const e = new Date(end.getFullYear(), end.getMonth(), end.getDate());
-                return target >= s && target <= e;
-            });
-        };
-
-        const cfgLokasi = this.mockData.lokasiDanJamKerja || {};
-        const cfgJk = cfgLokasi.jamKerja || {};
-
-        // Helper untuk mendapatkan jam pulang shift guru pada hari tertentu
-        const getBatasMenitPulang = (guru, dayOfWeek) => {
-            const shiftGuru = guru.shift || 'Pagi';
-            const shiftCfg = shiftGuru === 'Siang' ? (cfgJk.siang || {}) : (cfgJk.pagi || {});
-            let jamPulangStr = (shiftCfg.seninKamis && shiftCfg.seninKamis.pulang) || (shiftGuru === 'Siang' ? '17:00' : '12:00');
-            
-            if (dayOfWeek === 5) { // Jumat
-                if (shiftCfg.jumat && shiftCfg.jumat.pulang) jamPulangStr = shiftCfg.jumat.pulang;
-            } else if (dayOfWeek === 6) { // Sabtu
-                if (shiftCfg.sabtu && shiftCfg.sabtu.pulang) jamPulangStr = shiftCfg.sabtu.pulang;
-            } else {
-                if (shiftCfg.seninKamis && shiftCfg.seninKamis.pulang) jamPulangStr = shiftCfg.seninKamis.pulang;
-            }
-
-            const parts = jamPulangStr.split(':');
-            const jam = parseInt(parts[0], 10) || 12;
-            const mnt = parseInt(parts[1], 10) || 0;
-            return (jam * 60) + mnt;
-        };
-
-        // 2. Evaluasi hari di bulan berjalan dari tanggal 1 s.d. hari ini (todayDate)
-        for (let d = 1; d <= todayDate; d++) {
-            const checkDate = new Date(year, month, d);
-            const dayOfWeek = checkDate.getDay();
-            const tglString = `${d.toString().padStart(2, '0')}/${(month+1).toString().padStart(2, '0')}/${year}`;
-
-            // Jika hari libur, abaikan
-            if (isTanggalLibur(checkDate, tglString)) continue;
-
-            const isToday = (d === todayDate);
-
-            // Filter guru aktif
-            const guruAktif = this.mockData.dataGuru.filter(guru => {
-                const st = (guru.statusAkun || '').toUpperCase();
-                return st === 'AKTIF' || !guru.statusAkun;
-            });
-
-            guruAktif.forEach(guru => {
-                // Untuk HARI INI (todayDate):
-                // Cek apakah jam pulang guru pada hari ini sudah lewat.
-                // Jika hari ini belum lewat jam pulang, guru belum tentu alpa (masih dalam jam sekolah/belum presensi).
+                // Kondisi 8: Waktu presensi yang diwajibkan telah berakhir sesuai aturan jam kerja
                 if (isToday) {
-                    const batasMenitPulang = getBatasMenitPulang(guru, dayOfWeek);
-                    if (currentTotalMinutes < batasMenitPulang) {
-                        return; // Jam pulang hari ini belum selesai, jangan buat alpa dulu!
+                    const shift = guru.shift || 'Pagi';
+                    const dayOfWeek = checkDate.getDay();
+                    const cfgLokasi = this.mockData.lokasiDanJamKerja || {};
+                    const cfgJk = cfgLokasi.jamKerja || {};
+                    const shiftCfg = shift === 'Siang' ? (cfgJk.siang || {}) : (cfgJk.pagi || {});
+
+                    let jamPulangStr = '12:00';
+                    if (dayOfWeek === 5) {
+                        jamPulangStr = shiftCfg.jumat?.pulang || (shift === 'Siang' ? '17:30' : '11:30');
+                    } else if (dayOfWeek === 6) {
+                        jamPulangStr = shiftCfg.sabtu?.pulang || (shift === 'Siang' ? '17:00' : '12:00');
+                    } else {
+                        jamPulangStr = shiftCfg.seninKamis?.pulang || (shift === 'Siang' ? '17:00' : '12:00');
+                    }
+
+                    const [hP, mP] = jamPulangStr.split(':').map(Number);
+                    const pulangTotalMin = (hP * 60) + (mP || 0);
+
+                    // Jangan menetapkan ALPA jika jam kerja hari ini belum berakhir
+                    if (currentTotalMin < pulangTotalMin) {
+                        removeSystemAlpa();
+                        return;
                     }
                 }
 
-                // Cek apakah guru punya izin/sakit/cuti yang sudah disetujui pada tanggal ini
-                if (isGuruAdaIzin(guru, checkDate)) {
-                    return; // Ada izin, tidak dihitung alpa
+                // Kondisi 5: Guru tidak memiliki presensi masuk yang valid
+                if (this.hasValidPresensiMasuk(guru, tglStr)) {
+                    removeSystemAlpa();
+                    return;
                 }
 
-                // Cari apakah ada riwayat untuk guru ini pada tanggal tersebut
-                const record = this.mockData.riwayat.find(r => 
-                    (r.nip === guru.username || r.nip === guru.nip || (guru.nama && r.namaGuru === guru.nama)) && 
-                    r.tanggal === tglString
+                // Kondisi 6: Guru tidak memiliki izin, sakit, atau cuti yang telah disetujui dan berlaku pada tanggal tersebut
+                if (this.hasApprovedIzinSakitCuti(guru, checkDate, tglStr)) {
+                    removeSystemAlpa();
+                    return;
+                }
+
+                // Kondisi 7: Guru tidak memiliki pengajuan koreksi presensi yang masih berstatus menunggu persetujuan
+                if (this.hasPendingPengajuan(guru, checkDate)) {
+                    removeSystemAlpa();
+                    return;
+                }
+
+                // Jika seluruh kondisi terpenuhi -> Tetapkan status ALPA secara otomatis
+                const recordExists = this.mockData.riwayat.find(r => 
+                    ((r.nip && (r.nip === nip || r.nip === guru.nip || r.nip === guru.username)) || 
+                     (r.namaGuru && nama && r.namaGuru.trim().toLowerCase() === nama.trim().toLowerCase())) && 
+                    r.tanggal === tglStr
                 );
 
-                if (!record) {
-                    // Belum ada riwayat sama sekali, dan jam pulang telah lewat -> buat ALPA
-                    const docId = `${year}${String(month + 1).padStart(2, '0')}${String(d).padStart(2, '0')}_${guru.username || guru.nip || 'anon'}`;
-                    const newAlpa = {
-                        tanggal: tglString,
-                        nip: guru.username || guru.nip || '-',
-                        namaGuru: guru.nama,
+                if (!recordExists) {
+                    const alpaRecord = {
+                        tanggal: tglStr,
+                        nip: nip,
+                        namaGuru: nama,
                         jamMasuk: '--:--',
-                        jamPulang: '--:--',
                         jam_masuk: '--:--',
+                        jamPulang: '--:--',
                         jam_pulang: '--:--',
                         status: 'ALPA',
-                        keterangan: 'Sistem: Tidak melakukan presensi masuk dan pulang',
+                        keterangan: 'Sistem: Tidak ada presensi masuk',
                         lokasi: '-',
-                        jarak: '-',
-                        fotoMasuk: '',
-                        fotoPulang: '',
-                        jarakMasuk: null,
-                        jarakPulang: null
+                        jarak: '-'
                     };
-
-                    this.mockData.riwayat.push(newAlpa);
-                    alpaDocsToSave.push({ docId, data: newAlpa });
+                    this.mockData.riwayat.push(alpaRecord);
                     hasChanges = true;
-                } else if ((record.status || '').toUpperCase() === 'ALPA') {
-                    // Pastikan properti jamMasuk & jamPulang selalu terdefinisi
-                    if (!record.jamMasuk) record.jamMasuk = '--:--';
-                    if (!record.jamPulang) record.jamPulang = '--:--';
+
+                    // Sinkronisasi data ke Firestore presensi_guru
+                    const docId = `${checkYear}${checkMonth.toString().padStart(2, '0')}${d.toString().padStart(2, '0')}_${nip}`;
+                    try {
+                        if (typeof db !== 'undefined') {
+                            db.collection('presensi_guru').doc(docId).set(alpaRecord, { merge: true });
+                        }
+                    } catch(e) {}
+                } else if ((recordExists.status || '').toUpperCase() !== 'ALPA' && (recordExists.status || '').toUpperCase().includes('BELUM')) {
+                    recordExists.status = 'ALPA';
+                    recordExists.keterangan = 'Sistem: Tidak ada presensi masuk';
+                    hasChanges = true;
+                    const docId = `${checkYear}${checkMonth.toString().padStart(2, '0')}${d.toString().padStart(2, '0')}_${nip}`;
+                    try {
+                        if (typeof db !== 'undefined') {
+                            db.collection('presensi_guru').doc(docId).set(recordExists, { merge: true });
+                        }
+                    } catch(e) {}
                 }
             });
         }
 
-        // Urutkan riwayat berdasarkan tanggal terbaru di atas
         if (hasChanges) {
-            this.mockData.riwayat.sort((a,b) => {
-                let dateA = (a.tanggal || '').split('/').reverse().join('');
-                let dateB = (b.tanggal || '').split('/').reverse().join('');
-                return dateB.localeCompare(dateA);
-            });
-
             localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
         }
-
-        // Sinkronisasi ke Firestore (presensi_guru)
-        if (typeof db !== 'undefined') {
-            // Hapus doc ALPA yang dibatalkan karena hari libur baru
-            alpaDocsToDelete.forEach(docId => {
-                db.collection('presensi_guru').doc(docId).delete().catch(e => console.warn('Hapus alpa libur:', e));
-            });
-
-            // Simpan doc ALPA baru ke Firestore
-            alpaDocsToSave.forEach(item => {
-                db.collection('presensi_guru').doc(item.docId).set(item.data, { merge: true })
-                    .catch(e => console.warn('Simpan alpa ke Firestore:', e));
-            });
-        }
-
-        return hasChanges;
     },
 
     // ==========================================
@@ -1453,67 +1431,53 @@ var app = {
     navigate(screenId) {
         // Proteksi route (Frontend Check)
         if (screenId !== 'login') {
-            const token = safeStorage.getItem('session_token');
-            const userStr = safeStorage.getItem('user_info');
+            const token = localStorage.getItem('session_token');
+            const userStr = localStorage.getItem('user_info');
             
             if (!token || !userStr) {
                 screenId = 'login'; // Paksa ke login jika belum ada session
                 this.showToast('Silakan login terlebih dahulu', 'warning', 'text-yellow-400');
             } else {
-                let user;
-                try {
-                    user = JSON.parse(userStr);
-                } catch(e) {
-                    user = { role: 'GURU' };
-                }
-
+                const user = JSON.parse(userStr);
                 // Cegah Guru mengakses Admin
                 if (screenId.startsWith('admin') && user.role !== 'ADMIN') {
                     screenId = 'guru-dashboard';
                     this.showToast('Akses ditolak: Anda bukan Admin', 'error', 'text-red-400');
                 }
                 
-                try {
-                    if (screenId === 'guru-dashboard' || screenId === 'guru-riwayat' || screenId === 'admin-dashboard' || screenId === 'admin-rekap' || screenId === 'admin-riwayat') {
-                        if (typeof this.autoGenerateAlpa === 'function') this.autoGenerateAlpa();
-                    }
+                if (screenId === 'guru-dashboard') {
+                    this.loadDashboardGuruData(user);
+                } else if (screenId === 'guru-riwayat') {
+                    this.loadRiwayatGuru();
+                } else if (screenId === 'guru-izin') {
+                    this.loadIzinGuru();
+                } else if (screenId === 'admin-dashboard') {
+                    this.loadDashboardAdmin();
+                } else if (screenId === 'admin-rekap') {
+                    this.loadRekapAdmin();
+                } else if (screenId === 'admin-riwayat') {
+                    this.loadRiwayatAdmin();
+                } else if (screenId === 'admin-izin') {
+                    this.loadIzinAdmin();
+                } else if (screenId === 'guru-jurnal') {
+                    this.loadJurnalGuru();
+                } else if (screenId === 'admin-jurnal') {
+                    this.loadJurnalAdmin();
+                } else if (screenId === 'admin-guru') {
+                    this.loadDataGuru();
+                } else if (screenId === 'guru-slip-gaji') {
+                    this.loadSlipGuru();
+                } else if (screenId === 'admin-upload-slip') {
+                    this.loadSlipAdmin();
+                } else if (screenId === 'admin-lokasi') {
+                    this.renderPengaturanLokasi();
+                    this.initLokasiMap();
+                } else if (screenId === 'admin-pengaturan') {
+                    this.renderPengaturan();
+                }
 
-                    if (screenId === 'guru-dashboard') {
-                        this.loadDashboardGuruData(user);
-                    } else if (screenId === 'guru-riwayat') {
-                        this.loadRiwayatGuru();
-                    } else if (screenId === 'guru-izin') {
-                        this.loadIzinGuru();
-                    } else if (screenId === 'admin-dashboard') {
-                        this.loadDashboardAdmin();
-                    } else if (screenId === 'admin-rekap') {
-                        this.loadRekapAdmin();
-                    } else if (screenId === 'admin-riwayat') {
-                        this.loadRiwayatAdmin();
-                    } else if (screenId === 'admin-izin') {
-                        this.loadIzinAdmin();
-                    } else if (screenId === 'guru-jurnal') {
-                        this.loadJurnalGuru();
-                    } else if (screenId === 'admin-jurnal') {
-                        this.loadJurnalAdmin();
-                    } else if (screenId === 'admin-guru') {
-                        this.loadDataGuru();
-                    } else if (screenId === 'guru-slip-gaji') {
-                        this.loadSlipGuru();
-                    } else if (screenId === 'admin-upload-slip') {
-                        this.loadSlipAdmin();
-                    } else if (screenId === 'admin-lokasi') {
-                        this.renderPengaturanLokasi();
-                        this.initLokasiMap();
-                    } else if (screenId === 'admin-pengaturan') {
-                        this.renderPengaturan();
-                    }
-
-                    if (screenId !== 'guru-presensi' && this.matikanKamera) {
-                        this.matikanKamera();
-                    }
-                } catch (e) {
-                    console.warn(`Peringatan muat data screen ${screenId}:`, e);
+                if (screenId !== 'guru-presensi' && this.matikanKamera) {
+                    this.matikanKamera();
                 }
             }
         }
@@ -1539,7 +1503,8 @@ var app = {
         const target = document.getElementById(`screen-${screenId}`);
         if(target) {
             target.style.display = 'flex';
-            target.classList.add('active');
+            // small delay for transition
+            setTimeout(() => target.classList.add('active'), 10);
         }
         
         this.state.currentScreen = screenId;
@@ -1613,8 +1578,8 @@ var app = {
             
             if(res.success) {
                 // Simpan session info di localStorage
-                safeStorage.setItem('session_token', res.token);
-                safeStorage.setItem('user_info', JSON.stringify(res.user));
+                localStorage.setItem('session_token', res.token);
+                localStorage.setItem('user_info', JSON.stringify(res.user));
                 this.state.currentUser = res.user;
                 
                 this.showToast('Login berhasil', 'check_circle', 'text-green-400');
@@ -1685,11 +1650,11 @@ var app = {
     },
 
     logout() {
-        const token = safeStorage.getItem('session_token');
+        const token = localStorage.getItem('session_token');
         
         const finishLogout = () => {
-            safeStorage.removeItem('session_token');
-            safeStorage.removeItem('user_info');
+            localStorage.removeItem('session_token');
+            localStorage.removeItem('user_info');
             this.state.currentUser = null;
             this.navigate('login');
             this.showToast('Berhasil logout', 'info', 'text-blue-400');
@@ -1701,6 +1666,9 @@ var app = {
     },
 
     loadDashboardGuruData(user) {
+        // Jalankan evaluasi alpa otomatis sebelum memuat dashboard
+        this.autoGenerateAlpa();
+
         // Fetch latest data from mockData in case admin updated it
         const latestGuru = this.mockData?.dataGuru?.find(g => g.username === user.username) || user;
         const profilePicture = latestGuru.fotoUrl || latestGuru.img;
@@ -1757,28 +1725,24 @@ var app = {
                 
                 const statusEl = document.getElementById('guru-dashboard-status');
                 statusEl.innerText = d.presensi.status;
-                const stUpper = (d.presensi.status || '').toUpperCase();
-                if(stUpper === 'HADIR' || stUpper === 'SELESAI') {
+                const statUpper = (d.presensi.status || '').toUpperCase();
+                if(statUpper === 'HADIR' || statUpper === 'SELESAI') {
                     statusEl.className = 'text-[10px] bg-green-100 text-green-700 px-2 py-1 rounded w-max font-medium';
-                } else if(stUpper === 'TERLAMBAT') {
+                } else if(statUpper.includes('TERLAMBAT')) {
                     statusEl.className = 'text-[10px] bg-yellow-100 text-yellow-700 px-2 py-1 rounded w-max font-medium';
-                } else if(stUpper === 'ALPA') {
-                    statusEl.className = 'text-[10px] bg-red-100 text-red-700 px-2 py-1 rounded w-max font-bold border border-red-200';
-                } else if(stUpper === 'HARI LIBUR') {
+                } else if(statUpper === 'ALPA') {
+                    statusEl.className = 'text-[10px] bg-red-100 text-red-700 px-2 py-1 rounded w-max font-medium border border-red-200';
+                } else if(statUpper === 'IZIN' || statUpper === 'SAKIT' || statUpper === 'CUTI' || statUpper.includes('LIBUR')) {
                     statusEl.className = 'text-[10px] bg-blue-100 text-blue-700 px-2 py-1 rounded w-max font-medium';
                 } else {
                     statusEl.className = 'text-[10px] bg-gray-100 text-gray-700 px-2 py-1 rounded w-max font-medium';
                 }
                 
                 const statusPulangEl = document.getElementById('guru-dashboard-status-pulang');
-                if (d.presensi.pulang !== '--:--') {
+                if (d.presensi.pulang !== '--:--' && d.presensi.pulang !== '') {
                     statusPulangEl.innerText = 'Selesai';
                     statusPulangEl.className = 'text-[10px] bg-green-100 text-green-700 px-2 py-1 rounded w-max font-medium border border-green-200';
                     document.getElementById('guru-dashboard-pulang').classList.replace('text-gray-400', 'text-gray-800');
-                } else if (stUpper === 'ALPA') {
-                    statusPulangEl.innerText = 'Alpa';
-                    statusPulangEl.className = 'text-[10px] bg-red-100 text-red-700 px-2 py-1 rounded w-max font-bold border border-red-200';
-                    document.getElementById('guru-dashboard-pulang').classList.replace('text-gray-800', 'text-gray-400');
                 } else {
                     statusPulangEl.innerText = 'Belum Presensi';
                     statusPulangEl.className = 'text-[10px] bg-red-50 text-red-600 px-2 py-1 rounded w-max font-medium border border-red-100';
@@ -1790,7 +1754,7 @@ var app = {
                     document.getElementById('guru-dashboard-lokasi-status').innerText = 'Presensi hari ini tercatat';
                 } else {
                     document.getElementById('guru-dashboard-jarak').innerText = '-';
-                    document.getElementById('guru-dashboard-lokasi-status').innerText = 'Menunggu presensi hari ini';
+                    document.getElementById('guru-dashboard-lokasi-status').innerText = statUpper === 'ALPA' ? 'Waktu presensi telah berakhir' : 'Menunggu presensi hari ini';
                 }
 
                 document.getElementById('guru-dashboard-stat-hadir').innerText = d.statistik.hadir;
@@ -1808,73 +1772,67 @@ var app = {
             this.showToast('Koneksi terputus', 'wifi_off', 'text-red-400');
         };
 
-        
-            // MOCK LOGIC LOCALHOST
-            setTimeout(() => {
-                if (typeof this.autoGenerateAlpa === 'function') {
-                    this.autoGenerateAlpa();
+        // MOCK LOGIC LOCALHOST
+        setTimeout(() => {
+            const now = new Date();
+            const hariArr = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+            const bulanArr = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+            const todayStr = `${hariArr[now.getDay()]}, ${now.getDate()} ${bulanArr[now.getMonth()]} ${now.getFullYear()}`;
+            
+            const tglString = `${now.getDate().toString().padStart(2, '0')}/${(now.getMonth()+1).toString().padStart(2, '0')}/${now.getFullYear()}`;
+            const userInfo = JSON.parse(localStorage.getItem('user_info') || '{}');
+            const myNip = userInfo.username || userInfo.nip;
+            const myNama = userInfo.nama || '';
+
+            let todayRecord = this.mockData.riwayat.find(r => 
+                r.tanggal === tglString && 
+                ((r.nip && (r.nip === myNip || r.nip === userInfo.nip || r.nip === userInfo.username)) || 
+                 (r.namaGuru && myNama && r.namaGuru.trim().toLowerCase() === myNama.trim().toLowerCase()))
+            );
+            
+            let todayMasuk = '--:--';
+            let todayPulang = '--:--';
+            let todayStatus = 'Belum Presensi';
+            let todayJarak = null;
+            
+            if (todayRecord) {
+                todayMasuk = todayRecord.jamMasuk || todayRecord.jam_masuk || '--:--';
+                todayPulang = todayRecord.jamPulang || todayRecord.jam_pulang || '--:--';
+                todayStatus = todayRecord.status || 'Hadir';
+                todayJarak = todayRecord.jarakPulang !== null && todayRecord.jarakPulang !== undefined ? todayRecord.jarakPulang : todayRecord.jarakMasuk;
+            } else {
+                if (this.isHariLiburMingguan(now)) {
+                    todayStatus = 'Libur Mingguan';
+                } else if (this.isHariLiburKhusus(now)) {
+                    todayStatus = 'Hari Libur / Tanggal Merah';
                 }
+            }
 
-                const now = new Date();
-                const hariArr = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-                const bulanArr = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
-                const todayStr = `${hariArr[now.getDay()]}, ${now.getDate()} ${bulanArr[now.getMonth()]} ${now.getFullYear()}`;
-                
-                const tglString = `${now.getDate().toString().padStart(2, '0')}/${(now.getMonth()+1).toString().padStart(2, '0')}/${now.getFullYear()}`;
-                const userInfo = JSON.parse(localStorage.getItem('user_info') || '{}');
-                const myUsername = userInfo.username || '';
-                const myNip = userInfo.nip || '';
-                const myNama = userInfo.nama || '';
-
-                let todayRecord = (this.mockData.riwayat || []).find(r => 
-                    r.tanggal === tglString && 
-                    (r.nip === myUsername || r.nip === myNip || (myNama && r.namaGuru === myNama))
-                );
-                
-                let todayMasuk = '--:--';
-                let todayPulang = '--:--';
-                let todayStatus = 'Belum Presensi';
-                let todayJarak = null;
-                
-                if (todayRecord) {
-                    todayMasuk = todayRecord.jamMasuk || todayRecord.jam_masuk || '--:--';
-                    todayPulang = todayRecord.jamPulang || todayRecord.jam_pulang || '--:--';
-                    todayStatus = todayRecord.status || 'Hadir';
-                    todayJarak = todayRecord.jarakPulang !== null && todayRecord.jarakPulang !== undefined ? todayRecord.jarakPulang : todayRecord.jarakMasuk;
-                } else {
-                    const nowDay = now.getDay();
-                    const isHoliday = (nowDay === 0) || 
-                                      (nowDay === 6 && this.mockData.schoolSettings && this.mockData.schoolSettings.sabtuLibur) ||
-                                      (this.mockData.schoolSettings && (this.mockData.schoolSettings.hariLibur || []).some(h => (typeof h === 'string' ? h : h.tanggal) === tglString));
-                    if (isHoliday) {
-                        todayStatus = 'Hari Libur';
-                    }
+            const currentMonthStr = `/${(now.getMonth()+1).toString().padStart(2, '0')}/${now.getFullYear()}`;
+            let myHadir = 0, myTerlambat = 0, myIzin = 0, mySakit = 0, myCuti = 0, myAlpa = 0;
+            this.mockData.riwayat.forEach(r => {
+                const matchMe = (r.nip && (r.nip === myNip || r.nip === userInfo.nip || r.nip === userInfo.username)) || 
+                                (r.namaGuru && myNama && r.namaGuru.trim().toLowerCase() === myNama.trim().toLowerCase());
+                if(matchMe && (r.tanggal || '').endsWith(currentMonthStr)) {
+                    const s = (r.status || '').toUpperCase();
+                    if(s === 'HADIR' || s === 'SELESAI' || s === 'DI LUAR LOKASI') myHadir++;
+                    else if(s.includes('TERLAMBAT')) myTerlambat++;
+                    else if(s === 'IZIN') myIzin++;
+                    else if(s === 'SAKIT') mySakit++;
+                    else if(s === 'CUTI') myCuti++;
+                    else if(s === 'ALPA') myAlpa++;
                 }
+            });
 
-                const currentMonthStr = `/${(now.getMonth()+1).toString().padStart(2, '0')}/${now.getFullYear()}`;
-                let myHadir = 0, myTerlambat = 0, myIzin = 0, mySakit = 0, myCuti = 0, myAlpa = 0;
-                (this.mockData.riwayat || []).forEach(r => {
-                    const isMy = (r.nip === myUsername || r.nip === myNip || (myNama && r.namaGuru === myNama));
-                    if(isMy && (r.tanggal || '').endsWith(currentMonthStr)) {
-                        const s = (r.status || '').toUpperCase();
-                        if(s === 'HADIR' || s === 'SELESAI' || s === 'DI LUAR LOKASI' || s.includes('KOREKSI')) myHadir++;
-                        else if(s === 'TERLAMBAT') myTerlambat++;
-                        else if(s === 'IZIN') myIzin++;
-                        else if(s === 'SAKIT') mySakit++;
-                        else if(s === 'CUTI') myCuti++;
-                        else if(s === 'ALPA') myAlpa++;
-                    }
-                });
-
-                onSuccess({
-                    success: true, 
-                    data: {
-                        tanggal: todayStr,
-                        presensi: { masuk: todayMasuk, pulang: todayPulang, status: todayStatus, jarak: todayJarak },
-                        statistik: { hadir: myHadir, terlambat: myTerlambat, izin: myIzin, sakit: mySakit, cuti: myCuti, alpa: myAlpa }
-                    }
-                });
-            }, 100);
+            onSuccess({
+                success: true, 
+                data: {
+                    tanggal: todayStr,
+                    presensi: { masuk: todayMasuk, pulang: todayPulang, status: todayStatus, jarak: todayJarak },
+                    statistik: { hadir: myHadir, terlambat: myTerlambat, izin: myIzin, sakit: mySakit, cuti: myCuti, alpa: myAlpa }
+                }
+            });
+        }, 300);
         
     },
 
@@ -1894,40 +1852,20 @@ var app = {
     },
 
     bukaPresensi(tipe) {
-        // Cek apakah hari ini hari libur atau hari Minggu
+        // Cek apakah hari ini hari libur mingguan atau tanggal merah
         const now = new Date();
-        const year = now.getFullYear();
-        const month = now.getMonth();
-        const d = now.getDate();
-        const tglToday = `${d.toString().padStart(2, '0')}/${(month+1).toString().padStart(2, '0')}/${year}`;
-        const rawHariLibur = (this.mockData.schoolSettings && this.mockData.schoolSettings.hariLibur) || [];
-        const sabtuLibur = !!(this.mockData.schoolSettings && this.mockData.schoolSettings.sabtuLibur);
-        const isLiburNasional = rawHariLibur.some(h => (typeof h === 'string' ? h : h.tanggal) === tglToday);
+        const hariNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
 
-        if (now.getDay() === 0) {
-            this.showToast('Hari ini hari Minggu (Hari Libur). Presensi tidak dibuka.', 'warning', 'text-yellow-400');
+        if (this.isHariLiburMingguan(now)) {
+            this.showToast(`Hari ini hari ${hariNames[now.getDay()]} (Hari Libur Mingguan). Presensi tidak dibuka.`, 'warning', 'text-yellow-400');
             return;
         }
-        if (now.getDay() === 6 && sabtuLibur) {
-            this.showToast('Hari ini hari Sabtu (Hari Libur). Presensi tidak dibuka.', 'warning', 'text-yellow-400');
-            return;
-        }
-        if (isLiburNasional) {
-            this.showToast('Hari ini adalah Hari Libur / Tanggal Merah. Presensi tidak dibuka dan Anda tidak dihitung Alpa.', 'info', 'text-blue-400');
+        if (this.isHariLiburKhusus(now)) {
+            this.showToast('Hari ini adalah Hari Libur / Tanggal Merah. Anda tidak dihitung Alpa.', 'info', 'text-blue-400');
             return;
         }
 
         // Cek status hari ini
-        const userInfo = JSON.parse(localStorage.getItem('user_info') || '{}');
-        const todayRecord = (this.mockData.riwayat || []).find(r => 
-            r.tanggal === tglToday && 
-            (r.nip === userInfo.username || r.nip === userInfo.nip || (userInfo.nama && r.namaGuru === userInfo.nama))
-        );
-
-        if (todayRecord && (todayRecord.status || '').toUpperCase() === 'ALPA') {
-            this.showToast('Waktu presensi hari ini telah berakhir dan Anda telah tercatat Alpa. Silakan gunakan menu Pengajuan Izin/Koreksi.', 'error', 'text-red-400');
-            return;
-        }
         const waktuMasuk = document.getElementById('guru-dashboard-masuk').innerText.trim();
         const waktuPulang = document.getElementById('guru-dashboard-pulang').innerText.trim();
 
@@ -2420,6 +2358,7 @@ var app = {
                             this.mockData.riwayat.unshift(updatePayload);
                         }
                         localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
+                        this.autoGenerateAlpa();
 
                         // 3. Tulis langsung ke server tanpa antrean (Metode Fire & Forget)
                         await docRef.set(updatePayload, { merge: true });
@@ -2681,14 +2620,10 @@ var app = {
             
             // Hapus dari memori lokal
             this.mockData.riwayat = [];
-            this.mockData.riwayatLamaMainState = [];
             this.mockData.izin = [];
             this.mockData.izinAdmin = [];
-            this.mockData.izinLamaMainState = [];
             this.mockData.slipGaji = [];
-            this.mockData.slipLamaMainState = [];
             this.mockData.jurnal = [];
-            this.mockData.jurnalLamaMainState = [];
             localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
             
             // Hapus dari mainState dengan merge: true agar dataGuru dan pengaturan tidak tertimpa/rusak
@@ -2760,39 +2695,38 @@ var app = {
     },
 
     renderHariLibur() {
+        // 1. Sinkronisasi Checkbox Libur Mingguan
+        const liburMingguan = (this.mockData.schoolSettings && this.mockData.schoolSettings.hariLiburMingguan) || [0];
+        const days = ['minggu', 'senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu'];
+        days.forEach((dayName, idx) => {
+            const el = document.getElementById(`libur-${dayName}`);
+            if (el) {
+                el.checked = liburMingguan.includes(idx);
+            }
+        });
+
+        // 2. Render Tabel Hari Libur Khusus / Tanggal Merah
         const tbody = document.getElementById('list-hari-libur');
         if (!tbody) return;
         const rawLibur = (this.mockData.schoolSettings && this.mockData.schoolSettings.hariLibur) || [];
         
-        // Bersihkan entri korup (misal teks '${parts[2]}' atau '${tgl}')
-        const libur = rawLibur.filter(t => {
-            if (!t) return false;
-            if (typeof t === 'string') return !t.includes('${') && !t.includes('undefined');
-            if (typeof t === 'object' && t.tanggal) return !t.tanggal.includes('${') && !t.tanggal.includes('undefined');
-            return false;
-        });
-
+        // Bersihkan entri korup dan normalisasi format
+        const libur = rawLibur.filter(t => t && (typeof t === 'string' || typeof t === 'object') && !JSON.stringify(t).includes('${') && !JSON.stringify(t).includes('undefined'));
         if (libur.length !== rawLibur.length) {
             this.mockData.schoolSettings.hariLibur = libur;
             localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
             try { if (typeof db !== 'undefined') db.collection('pengaturan').doc('sekolah').set(this.mockData.schoolSettings, { merge: true }); } catch(e) {}
         }
-
-        // Render toggle sabtu libur
-        const toggleSabtu = document.getElementById('set-toggle-sabtu-libur');
-        if (toggleSabtu && this.mockData.schoolSettings) {
-            toggleSabtu.checked = !!this.mockData.schoolSettings.sabtuLibur;
-        }
         
         if (libur.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" class="text-center p-4 text-gray-500">Belum ada tanggal libur khusus yang ditambahkan.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center p-4 text-gray-500">Belum ada tanggal libur yang ditambahkan.</td></tr>';
             return;
         }
 
         let html = '';
         libur.forEach((item, index) => {
-            const tgl = typeof item === 'string' ? item : item.tanggal;
-            const ket = typeof item === 'string' ? '-' : (item.keterangan || '-');
+            const tgl = typeof item === 'string' ? item : (item.tanggal || '-');
+            const ket = (typeof item === 'object' && item.keterangan) ? item.keterangan : 'Hari Libur / Tanggal Merah';
             html += `
                 <tr class="border-b border-gray-100 hover:bg-gray-50">
                     <td class="text-center p-3 font-semibold text-gray-600">${index + 1}</td>
@@ -2809,35 +2743,53 @@ var app = {
         tbody.innerHTML = html;
     },
 
-    toggleSabtuLibur() {
-        const toggle = document.getElementById('set-toggle-sabtu-libur');
+    setLiburPreset(preset) {
+        const days = ['minggu', 'senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu'];
+        days.forEach(d => {
+            const el = document.getElementById(`libur-${d}`);
+            if (el) el.checked = false;
+        });
+        if (preset === '6hari') {
+            const m = document.getElementById('libur-minggu');
+            if (m) m.checked = true;
+        } else if (preset === '5hari') {
+            const m = document.getElementById('libur-minggu');
+            const s = document.getElementById('libur-sabtu');
+            if (m) m.checked = true;
+            if (s) s.checked = true;
+        }
+    },
+
+    simpanHariLiburMingguan() {
+        const selected = [];
+        const days = ['minggu', 'senin', 'selasa', 'rabu', 'kamis', 'jumat', 'sabtu'];
+        days.forEach((d, idx) => {
+            const el = document.getElementById(`libur-${d}`);
+            if (el && el.checked) selected.push(idx);
+        });
+
         if (!this.mockData.schoolSettings) this.mockData.schoolSettings = {};
-        this.mockData.schoolSettings.sabtuLibur = toggle ? toggle.checked : false;
+        this.mockData.schoolSettings.hariLiburMingguan = selected;
         localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
-        
+
         try {
             if (typeof db !== 'undefined') {
                 db.collection('pengaturan').doc('sekolah').set(this.mockData.schoolSettings, { merge: true });
                 db.collection('appData').doc('mainState').set({
                     schoolSettings: this.mockData.schoolSettings
-                }, { merge: true });
+                }, { merge: true }).catch(e => console.warn('Sync mainState liburMingguan:', e));
             }
         } catch(e) {}
 
         this.autoGenerateAlpa();
-        if (this.state) {
-            if (this.state.currentScreen === 'admin-dashboard') this.loadDashboardAdmin();
-            else if (this.state.currentScreen === 'admin-rekap') this.loadRekapAdmin();
-            else if (this.state.currentScreen === 'admin-riwayat') this.loadRiwayatAdmin();
-        }
-        this.showToast(this.mockData.schoolSettings.sabtuLibur ? 'Sabtu diatur sebagai Hari Libur' : 'Sabtu diatur sebagai Hari Masuk', 'check_circle', 'text-green-400');
+        this.showToast('Pengaturan hari libur mingguan berhasil disimpan', 'check_circle', 'text-green-400');
     },
 
     tambahHariLibur() {
         const input = document.getElementById('set-tgl-libur');
-        const inputKet = document.getElementById('set-ket-libur');
+        const ketInput = document.getElementById('set-ket-libur');
         const val = input ? input.value : '';
-        const ket = inputKet ? inputKet.value.trim() : '';
+        const ket = (ketInput ? ketInput.value.trim() : '') || 'Hari Libur Sekolah';
         if (!val) {
             this.showToast('Pilih tanggal terlebih dahulu', 'warning', 'text-yellow-400');
             return;
@@ -2848,25 +2800,28 @@ var app = {
         if (parts.length !== 3) return;
         const formattedDate = `${parts[2]}/${parts[1]}/${parts[0]}`;
 
-        if (!this.mockData.schoolSettings) this.mockData.schoolSettings = {};
-        if (!this.mockData.schoolSettings.hariLibur) this.mockData.schoolSettings.hariLibur = [];
+        if (!this.mockData.schoolSettings) {
+            this.mockData.schoolSettings = {};
+        }
+        if (!this.mockData.schoolSettings.hariLibur) {
+            this.mockData.schoolSettings.hariLibur = [];
+        }
 
-        const isExist = this.mockData.schoolSettings.hariLibur.some(h => {
-            const d = typeof h === 'string' ? h : h.tanggal;
-            return d === formattedDate;
+        const exists = this.mockData.schoolSettings.hariLibur.some(item => {
+            if (typeof item === 'string') return item === formattedDate;
+            if (item && typeof item === 'object') return item.tanggal === formattedDate;
+            return false;
         });
 
-        if (isExist) {
-            this.showToast('Tanggal tersebut sudah ada di daftar hari libur', 'info', 'text-blue-400');
+        if (exists) {
+            this.showToast('Tanggal tersebut sudah ada di daftar', 'info', 'text-blue-400');
             return;
         }
 
-        const liburObj = {
+        this.mockData.schoolSettings.hariLibur.push({
             tanggal: formattedDate,
-            keterangan: ket || 'Hari Libur Sekolah'
-        };
-
-        this.mockData.schoolSettings.hariLibur.push(liburObj);
+            keterangan: ket
+        });
         localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
         
         // Simpan ke Firestore
@@ -2879,12 +2834,11 @@ var app = {
             }
         } catch(e) {}
         
-        // Bersihkan ALPA otomatis untuk tanggal ini dan sinkronkan
-        this.autoGenerateAlpa();
         this.renderHariLibur();
+        this.autoGenerateAlpa();
         if (input) input.value = '';
-        if (inputKet) inputKet.value = '';
-        this.showToast(`Hari libur berhasil ditambahkan: ${formattedDate}`, 'check_circle', 'text-green-400');
+        if (ketInput) ketInput.value = '';
+        this.showToast('Hari libur berhasil ditambahkan: ' + formattedDate, 'check_circle', 'text-green-400');
     },
 
     hapusHariLibur(index) {
@@ -2903,8 +2857,8 @@ var app = {
                 }
             } catch(e) {}
             
-            this.autoGenerateAlpa();
             this.renderHariLibur();
+            this.autoGenerateAlpa();
             this.showToast('Hari libur dihapus', 'check_circle', 'text-green-400');
         }
     },
@@ -3273,9 +3227,6 @@ var app = {
     // ==========================================
     
     loadRiwayatGuru() {
-        if (typeof this.autoGenerateAlpa === 'function') {
-            this.autoGenerateAlpa();
-        }
         const token = localStorage.getItem('session_token');
         const container = document.getElementById('riwayat-list');
         const filterBulan = document.getElementById('filter-bulan') ? document.getElementById('filter-bulan').value : new Date().getMonth() + 1;
@@ -3283,20 +3234,23 @@ var app = {
         
         container.innerHTML = `<div class="text-center p-4 text-gray-500">Memuat riwayat...</div>`;
 
+        // Jalankan evaluasi alpa otomatis untuk bulan & tahun yang dipilih
+        this.autoGenerateAlpa(Number(filterBulan), Number(filterTahun));
+
         const onSuccess = (res) => {
             if (res.success) {
                 if (res.data.length === 0) {
-                    container.innerHTML = `<div class="text-center p-4 text-gray-500">Tidak ada riwayat presensi.</div>`;
+                    container.innerHTML = `<div class="text-center p-4 text-gray-500">Tidak ada riwayat.</div>`;
                     return;
                 }
                 let html = '';
                 res.data.forEach(item => {
                     let badgeClass = 'bg-gray-100 text-gray-700';
                     const stat = (item.status || '').toUpperCase();
-                    if(stat === 'HADIR' || stat === 'SELESAI' || stat.includes('KOREKSI')) badgeClass = 'bg-green-100 text-green-700';
-                    else if(stat === 'TERLAMBAT') badgeClass = 'bg-yellow-100 text-yellow-700';
+                    if(stat === 'HADIR' || stat === 'SELESAI') badgeClass = 'bg-green-100 text-green-700';
+                    else if(stat.includes('TERLAMBAT')) badgeClass = 'bg-yellow-100 text-yellow-700';
                     else if(stat === 'IZIN' || stat === 'SAKIT' || stat === 'CUTI') badgeClass = 'bg-blue-100 text-blue-700';
-                    else if(stat === 'ALPA') badgeClass = 'bg-red-100 text-red-700 font-bold';
+                    else if(stat === 'ALPA') badgeClass = 'bg-red-100 text-red-700 border border-red-200';
 
                     html += `
                         <div class="grid grid-cols-5 gap-1 text-center text-[10px] sm:text-xs py-3 border-b border-gray-100 items-center hover:bg-gray-50">
@@ -3318,24 +3272,30 @@ var app = {
             }
         };
 
+        // MOCK
         setTimeout(() => {
             const userInfo = JSON.parse(localStorage.getItem('user_info') || '{}');
-            const filterMonthStr = `/${filterBulan.toString().padStart(2, '0')}/${filterTahun}`;
-            const myUsername = userInfo.username || '';
-            const myNip = userInfo.nip || '';
+            const myNip = userInfo.username || userInfo.nip;
             const myNama = userInfo.nama || '';
+            const filterMonthStr = `/${filterBulan.toString().padStart(2, '0')}/${filterTahun}`;
             
             const myRiwayat = (this.mockData.riwayat || [])
                 .filter(r => {
-                    const isMy = (r.nip === myUsername || r.nip === myNip || (myNama && r.namaGuru === myNama));
-                    return isMy && (r.tanggal || '').endsWith(filterMonthStr);
+                    const matchUser = (r.nip && (r.nip === myNip || r.nip === userInfo.nip || r.nip === userInfo.username)) || 
+                                      (r.namaGuru && myNama && r.namaGuru.trim().toLowerCase() === myNama.trim().toLowerCase());
+                    return matchUser && (r.tanggal || '').endsWith(filterMonthStr);
+                })
+                .sort((a,b) => {
+                    const dateA = (a.tanggal || '').split('/').reverse().join('');
+                    const dateB = (b.tanggal || '').split('/').reverse().join('');
+                    return dateB.localeCompare(dateA);
                 })
                 .map(r => {
                     return {
                         tanggal: r.tanggal || '-',
                         jam_masuk: r.jamMasuk || r.jam_masuk || '--:--',
                         jam_pulang: r.jamPulang || r.jam_pulang || '--:--',
-                        status: r.status || 'Alpa',
+                        status: r.status || 'Hadir',
                         foto_masuk: r.fotoMasuk || '',
                         foto_pulang: r.fotoPulang || ''
                     };
@@ -3345,13 +3305,10 @@ var app = {
                 success: true,
                 data: myRiwayat
             });
-        }, 100);
+        }, 300);
     },
 
     loadRekapAdmin() {
-        if (typeof this.autoGenerateAlpa === 'function') {
-            this.autoGenerateAlpa();
-        }
         const token = localStorage.getItem('session_token');
         const tbody = document.getElementById('admin-rekap-tbody');
         const filterBulan = document.getElementById('admin-filter-bulan') ? document.getElementById('admin-filter-bulan').value : new Date().getMonth() + 1;
@@ -3359,14 +3316,17 @@ var app = {
         
         if(tbody) tbody.innerHTML = `<tr><td colspan="8" class="text-center p-4">Memuat data...</td></tr>`;
 
+        // Jalankan evaluasi alpa otomatis untuk bulan & tahun yang dipilih
+        this.autoGenerateAlpa(Number(filterBulan), Number(filterTahun));
+
         const onSuccess = (res) => {
             if (res.success && tbody) {
                 let html = '';
                 res.data.forEach((item, index) => {
                     html += `
                         <tr class="hover:bg-gray-50 border-b border-gray-100">
-                            <td class="text-center p-3 font-semibold text-gray-500">${index + 1}</td>
-                            <td class="p-3 font-medium text-gray-800">${item.nama}</td>
+                            <td class="text-center p-3 font-semibold text-gray-600">${index + 1}</td>
+                            <td class="font-medium p-3 text-gray-800">${item.nama}</td>
                             <td class="text-center p-3 font-bold text-green-600">${item.hadir}</td>
                             <td class="text-center p-3 font-bold text-yellow-600">${item.terlambat}</td>
                             <td class="text-center p-3 font-bold text-blue-600">${item.izin}</td>
@@ -3376,24 +3336,23 @@ var app = {
                         </tr>
                     `;
                 });
-                if(res.data.length === 0) html = `<tr><td colspan="8" class="text-center p-4 text-gray-500">Tidak ada data guru</td></tr>`;
+                if(res.data.length === 0) html = `<tr><td colspan="8" class="text-center p-4">Tidak ada data</td></tr>`;
                 tbody.innerHTML = html;
             }
         };
 
         // LOGIKA DINAMIS REKAP
         const filterMonthStr = `/${filterBulan.toString().padStart(2, '0')}/${filterTahun}`;
-        const guruList = (this.mockData.dataGuru || []).filter(g => (g.statusAkun || '').toUpperCase() === 'AKTIF' || !g.statusAkun);
-        const dataGuruAktif = guruList.length > 0 ? guruList : (this.mockData.dataGuru || []);
         
-        const rekapData = dataGuruAktif.map(guru => {
+        const rekapData = (this.mockData.dataGuru || []).map(guru => {
             let hadir = 0, terlambat = 0, izin = 0, sakit = 0, cuti = 0, alpa = 0;
             (this.mockData.riwayat || []).forEach(r => {
-                const matchGuru = (r.nip === guru.username || r.nip === guru.nip || (guru.nama && r.namaGuru === guru.nama));
+                const matchGuru = (r.nip && (r.nip === guru.username || r.nip === guru.nip)) || 
+                                  (r.namaGuru && guru.nama && r.namaGuru.trim().toLowerCase() === guru.nama.trim().toLowerCase());
                 if(matchGuru && (r.tanggal || '').endsWith(filterMonthStr)) {
                     const stat = (r.status || '').toUpperCase();
-                    if(stat === 'HADIR' || stat === 'SELESAI' || stat === 'DI LUAR LOKASI' || stat.includes('KOREKSI')) hadir++;
-                    else if(stat === 'TERLAMBAT') terlambat++;
+                    if(stat === 'HADIR' || stat === 'SELESAI' || stat === 'DI LUAR LOKASI') hadir++;
+                    else if(stat.includes('TERLAMBAT')) terlambat++;
                     else if(stat === 'IZIN') izin++;
                     else if(stat === 'SAKIT') sakit++;
                     else if(stat === 'CUTI') cuti++;
@@ -3402,7 +3361,6 @@ var app = {
             });
             return {
                 nama: guru.nama,
-                nip: guru.nip && guru.nip !== '-' ? guru.nip : (guru.username || '-'),
                 hadir: hadir,
                 terlambat: terlambat,
                 izin: izin,
@@ -3415,44 +3373,40 @@ var app = {
     },
 
     loadDashboardAdmin() {
-        if (typeof this.autoGenerateAlpa === 'function') {
-            this.autoGenerateAlpa();
-        }
+        // Evaluasi ALPA sistem secara otomatis sebelum merender dashboard
+        this.autoGenerateAlpa();
 
-        const guruAktif = (this.mockData.dataGuru || []).filter(g => (g.statusAkun || '').toUpperCase() === 'AKTIF' || !g.statusAkun);
-        const totalGuru = guruAktif.length || (this.mockData.dataGuru || []).length;
+        const activeGurus = (this.mockData.dataGuru || []).filter(g => g.statusAkun === 'AKTIF' || g.statusAkun === 'Aktif');
+        const totalGuru = activeGurus.length || (this.mockData.dataGuru || []).length;
         
         const now = new Date();
         const tglString = `${now.getDate().toString().padStart(2, '0')}/${(now.getMonth()+1).toString().padStart(2, '0')}/${now.getFullYear()}`;
         
         const presensiHariIni = (this.mockData.riwayat || []).filter(r => r.tanggal === tglString);
         
-        let hadirHariIni = 0;
-        let terlambatHariIni = 0;
-        let alpaHariIni = 0;
-        let izinHariIni = 0;
-
-        presensiHariIni.forEach(r => {
+        const sudahPresensi = presensiHariIni.filter(r => {
             const s = (r.status || '').toUpperCase();
-            if (s === 'HADIR' || s === 'SELESAI' || s === 'DI LUAR LOKASI' || s.includes('KOREKSI')) hadirHariIni++;
-            else if (s === 'TERLAMBAT') terlambatHariIni++;
-            else if (s === 'ALPA') alpaHariIni++;
-            else if (s === 'IZIN' || s === 'SAKIT' || s === 'CUTI') izinHariIni++;
-        });
+            return s.includes('HADIR') || s.includes('TERLAMBAT') || s.includes('SELESAI') || s.includes('DI LUAR LOKASI');
+        }).length;
+        const terlambat = presensiHariIni.filter(r => (r.status || '').toUpperCase().includes('TERLAMBAT')).length;
+        const alpaHariIni = presensiHariIni.filter(r => (r.status || '').toUpperCase() === 'ALPA').length;
+        const izinHariIni = presensiHariIni.filter(r => {
+            const s = (r.status || '').toUpperCase();
+            return s === 'IZIN' || s === 'SAKIT' || s === 'CUTI';
+        }).length;
 
-        const sudahTercatat = hadirHariIni + terlambatHariIni + alpaHariIni + izinHariIni;
-        const belumPresensi = Math.max(0, totalGuru - sudahTercatat);
+        const belumPresensi = Math.max(0, totalGuru - sudahPresensi - alpaHariIni - izinHariIni);
 
         const setEl = (id, val) => { if(document.getElementById(id)) document.getElementById(id).innerText = val; };
         setEl('admin-stat-total', totalGuru);
-        setEl('admin-stat-sudah', hadirHariIni);
-        setEl('admin-stat-terlambat', terlambatHariIni);
+        setEl('admin-stat-sudah', sudahPresensi);
+        setEl('admin-stat-terlambat', terlambat);
         setEl('admin-stat-alpa', alpaHariIni);
         setEl('admin-stat-belum', belumPresensi);
 
         // Menghitung status izin/cuti dari this.mockData.izinAdmin
         const izin = this.mockData.izinAdmin || [];
-        const izinMenunggu = izin.filter(i => (i.status || '').toUpperCase() === 'MENUNGGU').length;
+        const izinMenunggu = izin.filter(i => (i.status || '').toUpperCase() === 'MENUNGGU' || (i.status || '').toUpperCase() === 'PENDING').length;
         const izinDisetujui = izin.filter(i => (i.status || '').toUpperCase() === 'DISETUJUI').length;
         const izinDitolak = izin.filter(i => (i.status || '').toUpperCase() === 'DITOLAK').length;
         
@@ -3467,51 +3421,34 @@ var app = {
             if (inputTeks) inputTeks.value = this.mockData.pengumuman.teks || '';
             if (inputAktif) inputAktif.checked = this.mockData.pengumuman.aktif || false;
         }
-
         // Render Aktivitas Terbaru (jika riwayat ada)
         const aktivitasContainer = document.getElementById('admin-aktivitas-terbaru');
         if (aktivitasContainer) {
-            if ((this.mockData.riwayat || []).length === 0) {
+            if (this.mockData.riwayat.length === 0) {
                 aktivitasContainer.innerHTML = '<p class="text-sm text-gray-500 italic text-center py-4">Belum ada aktivitas.</p>';
             } else {
-                // Ambil 4 aktivitas terbaru
-                const recent = (this.mockData.riwayat || []).slice(0, 4);
+                // Ambil 3 aktivitas terbaru
+                const recent = this.mockData.riwayat.slice(0, 3);
                 let html = '';
                 recent.forEach(r => {
                     let icon = 'login';
                     let bg = 'bg-green-100';
                     let textCol = 'text-green-600';
                     let actionText = 'melakukan presensi masuk';
-                    const stat = (r.status || '').toUpperCase();
                     
-                    if(stat === 'TERLAMBAT') {
+                    if(r.status === 'TERLAMBAT') {
                         icon = 'alarm_off';
-                        bg = 'bg-yellow-100';
-                        textCol = 'text-yellow-600';
-                        actionText = 'terlambat (' + (r.jamMasuk || r.jam_masuk || '-') + ')';
-                    } else if(stat === 'ALPA') {
-                        icon = 'person_off';
                         bg = 'bg-red-100';
                         textCol = 'text-red-600';
-                        actionText = 'tidak hadir (Alpa)';
-                    } else if(stat === 'IZIN' || stat === 'SAKIT' || stat === 'CUTI') {
-                        icon = 'event_busy';
-                        bg = 'bg-blue-100';
-                        textCol = 'text-blue-600';
-                        actionText = `mengajukan ${stat.toLowerCase()}`;
-                    } else if(stat === 'SELESAI') {
-                        icon = 'logout';
-                        bg = 'bg-green-100';
-                        textCol = 'text-green-600';
-                        actionText = 'melakukan presensi pulang';
+                        actionText = 'terlambat (' + (r.jamMasuk || '-') + ')';
                     }
                     
                     html += `
                         <div class="flex items-start gap-3">
                             <div class="w-8 h-8 rounded-full ${bg} ${textCol} flex items-center justify-center shrink-0 mt-1"><span class="material-icons-round text-[16px]">${icon}</span></div>
                             <div>
-                                <p class="text-sm text-gray-800"><span class="font-semibold">${r.namaGuru || 'Guru'}</span> ${actionText}</p>
-                                <p class="text-xs text-gray-500">${r.tanggal} ${r.jamMasuk && r.jamMasuk !== '--:--' ? '• ' + r.jamMasuk : ''}</p>
+                                <p class="text-sm text-gray-800"><span class="font-semibold">${r.namaGuru}</span> ${actionText}</p>
+                                <p class="text-xs text-gray-500">${r.tanggal}</p>
                             </div>
                         </div>
                     `;
@@ -3748,9 +3685,6 @@ var app = {
     },
 
     loadRiwayatAdmin() {
-        if (typeof this.autoGenerateAlpa === 'function') {
-            this.autoGenerateAlpa();
-        }
         const token = localStorage.getItem('session_token');
         const tbody = document.getElementById('admin-riwayat-tbody');
         const filterBulan = document.getElementById('admin-riwayat-bulan') ? document.getElementById('admin-riwayat-bulan').value : new Date().getMonth() + 1;
@@ -3760,28 +3694,31 @@ var app = {
         
         if(tbody) tbody.innerHTML = `<tr><td colspan="8" class="text-center p-4">Memuat data...</td></tr>`;
 
+        // Jalankan evaluasi alpa otomatis untuk bulan & tahun yang dipilih
+        this.autoGenerateAlpa(Number(filterBulan), Number(filterTahun));
+
         const onSuccess = (res) => {
             if (res.success && tbody) {
                 let html = '';
                 res.data.forEach((item, index) => {
                     let badgeClass = 'bg-gray-100 text-gray-700';
                     const stat = (item.status || '').toUpperCase();
-                    if(stat === 'HADIR' || stat === 'SELESAI' || stat.includes('KOREKSI')) badgeClass = 'bg-green-100 text-green-700';
-                    else if(stat === 'TERLAMBAT') badgeClass = 'bg-yellow-100 text-yellow-700';
+                    if(stat === 'HADIR' || stat === 'SELESAI') badgeClass = 'bg-green-100 text-green-700';
+                    else if(stat.includes('TERLAMBAT')) badgeClass = 'bg-yellow-100 text-yellow-700';
                     else if(stat === 'IZIN' || stat === 'SAKIT' || stat === 'CUTI') badgeClass = 'bg-blue-100 text-blue-700';
-                    else if(stat === 'ALPA') badgeClass = 'bg-red-100 text-red-700 font-bold';
+                    else if(stat === 'ALPA') badgeClass = 'bg-red-100 text-red-700 border border-red-200';
 
                     html += `
                         <tr class="hover:bg-gray-50 border-b border-gray-100 text-sm">
-                            <td class="text-center p-3 font-semibold text-gray-500">${index + 1}</td>
-                            <td class="p-3 text-gray-700 whitespace-nowrap">${item.tanggal}</td>
-                            <td class="p-3 text-gray-500 text-xs">${item.nip}</td>
+                            <td class="text-center p-3 font-semibold text-gray-600">${index + 1}</td>
+                            <td class="p-3 font-medium text-gray-800">${item.tanggal}</td>
+                            <td class="p-3 text-gray-600">${item.nip}</td>
                             <td class="font-medium p-3 text-gray-800">${item.nama}</td>
-                            <td class="text-center p-3 font-mono text-xs">${item.jam_masuk}</td>
-                            <td class="text-center p-3 font-mono text-xs">${item.jam_pulang}</td>
+                            <td class="text-center p-3 text-gray-600">${item.jam_masuk}</td>
+                            <td class="text-center p-3 text-gray-600">${item.jam_pulang}</td>
                             <td class="text-center p-3"><span class="${badgeClass} text-[10px] px-2 py-1 rounded-full font-bold uppercase tracking-wider">${item.status || 'Alpa'}</span></td>
                             <td class="text-center p-3">
-                                ${item.foto_masuk || item.foto_pulang ? 
+                                ${(item.foto_masuk && item.foto_masuk !== '#' && item.foto_masuk !== '') || (item.foto_pulang && item.foto_pulang !== '#' && item.foto_pulang !== '') ? 
                                     `<button onclick="app.lihatFotoPresensi('${item.foto_masuk || item.foto_pulang}')" class="text-blue-500 hover:text-blue-700 font-medium text-xs flex items-center justify-center gap-1 w-full"><span class="material-icons-round text-[18px]">image</span> Foto</button>` : 
                                     `<span class="text-gray-400 text-xs">-</span>`
                                 }
@@ -3789,7 +3726,7 @@ var app = {
                         </tr>
                     `;
                 });
-                if(res.data.length === 0) html = `<tr><td colspan="8" class="text-center p-4 text-gray-500">Tidak ada data riwayat presensi</td></tr>`;
+                if(res.data.length === 0) html = `<tr><td colspan="8" class="text-center p-4">Tidak ada data</td></tr>`;
                 tbody.innerHTML = html;
             } else if (tbody) {
                 tbody.innerHTML = `<tr><td colspan="8" class="text-center p-4 text-red-500">Gagal: ${res.message}</td></tr>`;
@@ -3800,14 +3737,13 @@ var app = {
         // LOGIKA DINAMIS RIWAYAT
         const filterMonthStr = `/${filterBulan.toString().padStart(2, '0')}/${filterTahun}`;
         
-        let filteredRiwayat = this.mockData.riwayat || [];
+        let filteredRiwayat = (this.mockData.riwayat || []).slice();
         
         if (filterBulan && filterTahun) {
             filteredRiwayat = filteredRiwayat.filter(r => (r.tanggal || '').endsWith(filterMonthStr));
         }
         if (filterStatus) {
-            const fsUpper = filterStatus.toUpperCase();
-            filteredRiwayat = filteredRiwayat.filter(r => (r.status || '').toUpperCase().includes(fsUpper));
+            filteredRiwayat = filteredRiwayat.filter(r => (r.status || '').toUpperCase() === filterStatus.toUpperCase() || (r.status || '').toUpperCase().includes(filterStatus.toUpperCase()));
         }
         if (filterGuru) {
             const fg = filterGuru.toLowerCase();
@@ -3817,16 +3753,23 @@ var app = {
             );
         }
 
+        // Urutkan tanggal terbaru di atas
+        filteredRiwayat.sort((a,b) => {
+            const dateA = (a.tanggal || '').split('/').reverse().join('');
+            const dateB = (b.tanggal || '').split('/').reverse().join('');
+            return dateB.localeCompare(dateA);
+        });
+
         const dataRiwayat = filteredRiwayat.map(r => {
             let nip = r.nip || '-';
-            const guruInfo = (this.mockData.dataGuru || []).find(g => g.username === r.nip || g.nip === r.nip || g.nama === r.namaGuru);
+            const guruInfo = this.mockData.dataGuru.find(g => g.username === r.nip || g.nip === r.nip || (g.nama && r.namaGuru && g.nama.trim().toLowerCase() === r.namaGuru.trim().toLowerCase()));
             if (guruInfo) {
                 nip = (guruInfo.nip && guruInfo.nip !== '-') ? guruInfo.nip : (guruInfo.username || nip);
             }
             return {
                 tanggal: r.tanggal,
                 nip: nip,
-                nama: r.namaGuru || (guruInfo ? guruInfo.nama : '-'),
+                nama: r.namaGuru || '-',
                 jam_masuk: r.jamMasuk || r.jam_masuk || '--:--',
                 jam_pulang: r.jamPulang || r.jam_pulang || '--:--',
                 status: r.status,
@@ -3984,6 +3927,7 @@ var app = {
                 }
                 
                 localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
+                this.autoGenerateAlpa();
             }
             setTimeout(() => onSuccess({ success: true }), 500);
         
@@ -5314,6 +5258,7 @@ var app = {
                 };
                 this.mockData.izinAdmin.unshift(newIzin);
                 localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
+                this.autoGenerateAlpa();
                 
                 // TAHAP 3: Simpan ke koleksi terpisah
                 try { if(typeof db !== 'undefined') db.collection('izin_guru').doc(newIzin.id).set(newIzin, {merge:true}); } catch(e){}
@@ -6410,42 +6355,81 @@ var app = {
                             </div>
 
                             <!-- TAB: HARI LIBUR -->
-                            <div id="pengaturan-tab-libur" class="pengaturan-tab-content hidden">
+                            <div id="pengaturan-tab-libur" class="pengaturan-tab-content hidden space-y-6">
+                                <!-- Card 1: Hari Libur Mingguan (Hari Kerja Sekolah) -->
                                 <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
-                                    <h3 class="font-bold text-gray-800 flex items-center gap-2 mb-4"><span class="material-icons-round text-red-500">event_busy</span> Pengaturan Hari Libur / Tanggal Merah</h3>
-                                    <p class="text-xs text-gray-500 mb-4">Hari libur yang ditambahkan di sini akan diabaikan oleh sistem Alpa Otomatis (guru tidak akan dihitung Alpa pada tanggal tersebut).</p>
+                                    <h3 class="font-bold text-gray-800 flex items-center gap-2 mb-2"><span class="material-icons-round text-primary">date_range</span> Hari Libur Mingguan (Pola Kerja Sekolah)</h3>
+                                    <p class="text-xs text-gray-500 mb-4">Tentukan hari libur rutin mingguan sekolah. Hari yang dicentang sebagai hari libur tidak akan dihitung sebagai hari kerja, dan sistem tidak akan menetapkan status ALPA pada hari tersebut.</p>
                                     
-                                    <!-- Toggle Sabtu Libur (5 Hari Kerja) -->
-                                    <div class="mb-5 p-3.5 bg-gray-50 border border-gray-200 rounded-xl flex items-center justify-between max-w-lg">
-                                        <div>
-                                            <p class="text-sm font-semibold text-gray-800">Hari Sabtu Libur (5 Hari Kerja)</p>
-                                            <p class="text-xs text-gray-500">Aktifkan jika sekolah hanya 5 hari kerja (Sabtu libur & tidak dihitung Alpa).</p>
-                                        </div>
-                                        <label class="relative inline-flex items-center cursor-pointer shrink-0 ml-4">
-                                            <input type="checkbox" id="set-toggle-sabtu-libur" class="sr-only peer" onchange="app.toggleSabtuLibur()">
-                                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
-                                        </label>
-                                    </div>
-
-                                    <div class="flex flex-col sm:flex-row gap-2 mb-4 max-w-lg">
-                                        <input type="date" id="set-tgl-libur" class="border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none">
-                                        <input type="text" id="set-ket-libur" placeholder="Keterangan (contoh: Libur Nasional)" class="flex-1 border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none">
-                                        <button onclick="app.tambahHariLibur()" class="bg-primary hover:bg-primary-dark text-white px-4 py-2.5 rounded-lg text-sm font-medium transition flex items-center justify-center gap-1 shrink-0 shadow-sm">
-                                            <span class="material-icons-round text-[18px]">add</span> Tambah
+                                    <div class="flex flex-wrap gap-2 mb-4">
+                                        <button type="button" onclick="app.setLiburPreset('6hari')" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg border border-gray-300 transition flex items-center gap-1 font-medium">
+                                            <span class="material-icons-round text-[15px]">looks_6</span> Pola 6 Hari Kerja (Libur Minggu)
+                                        </button>
+                                        <button type="button" onclick="app.setLiburPreset('5hari')" class="text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1.5 rounded-lg border border-gray-300 transition flex items-center gap-1 font-medium">
+                                            <span class="material-icons-round text-[15px]">looks_5</span> Pola 5 Hari Kerja (Libur Sabtu & Minggu)
                                         </button>
                                     </div>
 
-                                    <div class="table-container max-w-lg">
+                                    <div class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-3 mb-4 p-4 bg-gray-50 rounded-xl border border-gray-200">
+                                        <label class="flex items-center gap-2 text-xs font-semibold text-gray-700 cursor-pointer">
+                                            <input type="checkbox" id="libur-minggu" value="0" class="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary">
+                                            <span>Minggu</span>
+                                        </label>
+                                        <label class="flex items-center gap-2 text-xs font-semibold text-gray-700 cursor-pointer">
+                                            <input type="checkbox" id="libur-senin" value="1" class="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary">
+                                            <span>Senin</span>
+                                        </label>
+                                        <label class="flex items-center gap-2 text-xs font-semibold text-gray-700 cursor-pointer">
+                                            <input type="checkbox" id="libur-selasa" value="2" class="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary">
+                                            <span>Selasa</span>
+                                        </label>
+                                        <label class="flex items-center gap-2 text-xs font-semibold text-gray-700 cursor-pointer">
+                                            <input type="checkbox" id="libur-rabu" value="3" class="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary">
+                                            <span>Rabu</span>
+                                        </label>
+                                        <label class="flex items-center gap-2 text-xs font-semibold text-gray-700 cursor-pointer">
+                                            <input type="checkbox" id="libur-kamis" value="4" class="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary">
+                                            <span>Kamis</span>
+                                        </label>
+                                        <label class="flex items-center gap-2 text-xs font-semibold text-gray-700 cursor-pointer">
+                                            <input type="checkbox" id="libur-jumat" value="5" class="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary">
+                                            <span>Jumat</span>
+                                        </label>
+                                        <label class="flex items-center gap-2 text-xs font-semibold text-gray-700 cursor-pointer">
+                                            <input type="checkbox" id="libur-sabtu" value="6" class="w-4 h-4 text-primary rounded border-gray-300 focus:ring-primary">
+                                            <span>Sabtu</span>
+                                        </label>
+                                    </div>
+
+                                    <button onclick="app.simpanHariLiburMingguan()" class="bg-primary hover:bg-primary-dark text-white px-5 py-2.5 rounded-lg text-sm font-medium transition shadow-sm flex items-center gap-1.5">
+                                        <span class="material-icons-round text-[18px]">save</span> Simpan Pola Libur Mingguan
+                                    </button>
+                                </div>
+
+                                <!-- Card 2: Tanggal Merah & Hari Libur Khusus / Sekolah -->
+                                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-100">
+                                    <h3 class="font-bold text-gray-800 flex items-center gap-2 mb-2"><span class="material-icons-round text-red-500">event_busy</span> Tanggal Merah & Hari Libur Khusus / Sekolah</h3>
+                                    <p class="text-xs text-gray-500 mb-4">Daftar tanggal merah nasional, cuti bersama, atau hari libur khusus yang dicatat dalam sistem. Pada tanggal-tanggal ini, presensi tidak dibuka dan guru tidak dihitung ALPA secara otomatis.</p>
+                                    
+                                    <div class="flex flex-col sm:flex-row gap-2 mb-4 max-w-xl">
+                                        <input type="date" id="set-tgl-libur" class="border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none">
+                                        <input type="text" id="set-ket-libur" placeholder="Keterangan (contoh: Libur Nasional / Cuti Bersama)" class="flex-1 border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none">
+                                        <button onclick="app.tambahHariLibur()" class="bg-primary hover:bg-primary-dark text-white px-4 py-2 rounded-lg text-sm font-medium transition flex items-center justify-center gap-1 shrink-0">
+                                            <span class="material-icons-round text-[18px]">add</span> Tambah Libur
+                                        </button>
+                                    </div>
+
+                                    <div class="table-container max-w-2xl">
                                         <table class="w-full text-left border-collapse">
                                             <thead>
-                                                <tr>
-                                                    <th class="w-12 text-center">No</th>
-                                                    <th>Tanggal Libur</th>
-                                                    <th>Keterangan</th>
-                                                    <th class="w-20 text-center">Aksi</th>
+                                                <tr class="bg-gray-50 text-gray-700 text-xs uppercase border-b border-gray-200">
+                                                    <th class="w-12 text-center p-3">No</th>
+                                                    <th class="p-3">Tanggal Libur</th>
+                                                    <th class="p-3">Keterangan</th>
+                                                    <th class="w-24 text-center p-3">Aksi</th>
                                                 </tr>
                                             </thead>
-                                            <tbody id="list-hari-libur">
+                                            <tbody id="list-hari-libur" class="text-sm divide-y divide-gray-100">
                                                 <!-- Dynamic Content -->
                                             </tbody>
                                         </table>
@@ -6674,12 +6658,7 @@ var app = {
             </div>
             `;
         },
-        adminTopbar: (title) => {
-            const prof = (app && app.mockData && app.mockData.adminProfile) ? app.mockData.adminProfile : {};
-            const foto = prof.fotoUrl || 'https://ui-avatars.com/api/?name=Admin&background=15803d&color=fff';
-            const nama = prof.nama || 'Administrator';
-            const roleText = prof.role === 'ADMIN' ? 'Administrator' : (prof.role || 'Administrator');
-            return `
+        adminTopbar: (title) => `
             <div class="bg-white h-16 border-b border-gray-200 flex items-center justify-between px-6 shrink-0">
                 <div class="flex items-center gap-4">
                     <span class="material-icons-round text-gray-500 cursor-pointer lg:hidden" onclick="app.toggleSidebar()">menu</span>
@@ -6691,16 +6670,15 @@ var app = {
                         <span class="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full"></span>
                     </div>
                     <div class="flex items-center gap-3 border-l border-gray-200 pl-4">
-                        <img src="${foto}" class="w-8 h-8 rounded-full object-cover admin-topbar-avatar">
+                        <img src="${app.mockData.adminProfile.fotoUrl}" class="w-8 h-8 rounded-full object-cover admin-topbar-avatar">
                         <div class="hidden md:block">
-                            <p class="text-sm font-semibold text-gray-700 admin-topbar-name">${nama}</p>
-                            <p class="text-xs text-gray-500">${roleText}</p>
+                            <p class="text-sm font-semibold text-gray-700 admin-topbar-name">${app.mockData.adminProfile.nama}</p>
+                            <p class="text-xs text-gray-500">${app.mockData.adminProfile.role === 'ADMIN' ? 'Administrator' : app.mockData.adminProfile.role}</p>
                         </div>
                     </div>
                 </div>
             </div>
-            `;
-        },
+        `,
 
         adminDashboard: function() { return `
             <div id="screen-admin-dashboard" class="screen h-full w-full bg-gray-50 flex-row hidden">
@@ -6709,7 +6687,7 @@ var app = {
                     ${this.adminTopbar('Dashboard Admin')}
                     <div class="p-6 flex-1 overflow-y-auto">
                         <!-- Stats Grid -->
-                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+                        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
                             <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex items-center justify-between">
                                 <div>
                                     <p class="text-sm text-gray-500 font-medium">Total Guru</p>
@@ -6727,20 +6705,20 @@ var app = {
                             <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex items-center justify-between">
                                 <div>
                                     <p class="text-sm text-gray-500 font-medium">Terlambat</p>
-                                    <p class="text-2xl font-bold text-yellow-600" id="admin-stat-terlambat">-</p>
+                                    <p class="text-2xl font-bold text-amber-500" id="admin-stat-terlambat">-</p>
                                 </div>
-                                <div class="w-12 h-12 bg-yellow-50 text-yellow-500 rounded-full flex items-center justify-center"><span class="material-icons-round">alarm_off</span></div>
+                                <div class="w-12 h-12 bg-amber-50 text-amber-500 rounded-full flex items-center justify-center"><span class="material-icons-round">alarm_off</span></div>
                             </div>
                             <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex items-center justify-between">
                                 <div>
                                     <p class="text-sm text-gray-500 font-medium">Alpa Hari Ini</p>
                                     <p class="text-2xl font-bold text-red-600" id="admin-stat-alpa">-</p>
                                 </div>
-                                <div class="w-12 h-12 bg-red-50 text-red-500 rounded-full flex items-center justify-center"><span class="material-icons-round">person_off</span></div>
+                                <div class="w-12 h-12 bg-red-50 text-red-500 rounded-full flex items-center justify-center"><span class="material-icons-round">cancel</span></div>
                             </div>
                             <div class="bg-white p-5 rounded-xl border border-gray-200 shadow-sm flex items-center justify-between">
                                 <div>
-                                    <p class="text-sm text-gray-500 font-medium">Belum Presensi</p>
+                                    <p class="text-sm text-gray-500 font-medium">Belum Absen</p>
                                     <p class="text-2xl font-bold text-purple-600" id="admin-stat-belum">-</p>
                                 </div>
                                 <div class="w-12 h-12 bg-purple-50 text-purple-500 rounded-full flex items-center justify-center"><span class="material-icons-round">help_outline</span></div>
