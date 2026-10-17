@@ -1,7 +1,8 @@
 const CACHE_NAME = 'presensi-guru-v3';
 const urlsToCache = [
   './index.html',
-  './manifest.json'
+  './manifest.json',
+  './xlsx.bundle.js'
 ];
 
 self.addEventListener('install', event => {

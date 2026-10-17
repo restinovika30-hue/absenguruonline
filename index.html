@@ -603,8 +603,13 @@ input[type="file"]::file-selector-button:hover {
         </div>
     </div>
 
-    <!-- SheetJS for XLSX Export -->
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <!-- SheetJS with Full Styling Support (xlsx-js-style) for Rich Excel Export -->
+    <script src="xlsx.bundle.js"></script>
+    <script>
+        if (typeof XLSX === 'undefined' || !XLSX.writeFile) {
+            document.write('<script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"><\/script>');
+        }
+    </script>
     
     
 
@@ -4032,6 +4037,684 @@ var app = {
             };
         });
         setTimeout(() => onSuccess({ success: true, data: dataRiwayat }), 100);
+    },
+
+    downloadExcelRiwayatAdmin() {
+        if (typeof XLSX === 'undefined') {
+            return this.showToast('Pustaka Excel sedang dimuat, mohon tunggu sebentar.', 'hourglass_empty', 'text-yellow-400');
+        }
+
+        const filterBulan = document.getElementById('admin-riwayat-bulan') ? document.getElementById('admin-riwayat-bulan').value : (new Date().getMonth() + 1);
+        const filterTahun = document.getElementById('admin-riwayat-tahun') ? document.getElementById('admin-riwayat-tahun').value : new Date().getFullYear();
+        const filterStatus = document.getElementById('admin-riwayat-status') ? document.getElementById('admin-riwayat-status').value.trim() : '';
+        const filterGuru = document.getElementById('admin-riwayat-guru') ? document.getElementById('admin-riwayat-guru').value.trim() : '';
+
+        const mNum = Number(filterBulan);
+        const yNum = Number(filterTahun);
+
+        // Jalankan evaluasi alpa otomatis untuk bulan & tahun yang dipilih
+        this.autoGenerateAlpa(mNum, yNum);
+
+        const mNames = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+        const bulanText = mNames[mNum - 1] || 'Bulan';
+        const tahunText = yNum.toString();
+
+        const schoolSettings = this.mockData?.schoolSettings || {};
+        const rawSchoolName = (schoolSettings.namaSekolah || '').trim();
+        const schoolName = (rawSchoolName && rawSchoolName !== 'Nama Sekolah') ? rawSchoolName : 'Presensi Guru';
+
+        // 1. Ambil daftar guru terdaftar
+        let guruList = (this.mockData?.dataGuru || []).slice();
+        if (guruList.length === 0) {
+            const mapG = new Map();
+            (this.mockData?.riwayat || []).forEach(r => {
+                const key = r.nip || r.namaGuru;
+                if (key && !mapG.has(key)) {
+                    mapG.set(key, { nip: r.nip || '-', nama: r.namaGuru || key, jabatan: 'Guru' });
+                }
+            });
+            guruList = Array.from(mapG.values());
+        }
+
+        // Terapkan filter pencarian guru aktif jika ada
+        if (filterGuru) {
+            const fg = filterGuru.toLowerCase();
+            guruList = guruList.filter(g => 
+                (g.nama && g.nama.toLowerCase().includes(fg)) || 
+                (g.nip && g.nip.toString().toLowerCase().includes(fg)) ||
+                (g.username && g.username.toString().toLowerCase().includes(fg))
+            );
+        }
+
+        if (guruList.length === 0) {
+            return this.showToast('Tidak ada data guru yang sesuai dengan pencarian untuk diekspor.', 'info', 'text-yellow-400');
+        }
+
+        // 2. Hitung jumlah hari dalam bulan terpilih secara dinamis
+        const totalDays = new Date(yNum, mNum, 0).getDate();
+
+        // 3. Pra-hitung informasi hari libur dan hari kerja efektif dalam bulan tersebut
+        const dayInfo = [];
+        let totalHariKerjaEfektif = 0;
+        for (let d = 1; d <= totalDays; d++) {
+            const checkDate = new Date(yNum, mNum - 1, d);
+            const tglStr = `${d.toString().padStart(2, '0')}/${mNum.toString().padStart(2, '0')}/${yNum}`;
+            const isLibur = this.isTanggalLibur(tglStr) || 
+                            this.isHariLiburMingguan(checkDate) || 
+                            this.isHariLiburKhusus(checkDate);
+            dayInfo[d] = {
+                d,
+                checkDate,
+                tglStr,
+                isLibur
+            };
+            if (!isLibur) totalHariKerjaEfektif++;
+        }
+
+        // 4. Bangun data status harian untuk setiap guru
+        const now = new Date();
+        const todayDateOnly = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const currentTotalMin = (now.getHours() * 60) + now.getMinutes();
+
+        const rekapGuruList = [];
+
+        guruList.forEach((guru, idx) => {
+            const nip = (guru.nip && guru.nip !== '-') ? String(guru.nip) : String(guru.username || '-');
+            const nama = guru.nama || '-';
+            const jabatan = guru.jabatan || 'Guru';
+
+            const dailyCodes = {};
+            let hadir = 0, terlambat = 0, izin = 0, sakit = 0, cuti = 0, alpa = 0;
+
+            for (let d = 1; d <= totalDays; d++) {
+                const info = dayInfo[d];
+                const curDateOnly = new Date(yNum, mNum - 1, d);
+                let code = '-';
+
+                // Cari entri presensi di riwayat
+                const r = (this.mockData?.riwayat || []).find(it => {
+                    const matchGuru = (it.nip && (it.nip === nip || it.nip === guru.nip || it.nip === guru.username || it.nip === guru.id)) ||
+                                      (it.namaGuru && nama && it.namaGuru.trim().toLowerCase() === nama.trim().toLowerCase());
+                    return matchGuru && it.tanggal === info.tglStr;
+                });
+
+                if (r) {
+                    const st = (r.status || '').toUpperCase();
+                    if (st.includes('TERLAMBAT')) {
+                        code = 'T';
+                    } else if (st === 'HADIR' || st === 'SELESAI' || st === 'DI LUAR LOKASI') {
+                        code = 'H';
+                    } else if (st === 'IZIN') {
+                        code = 'I';
+                    } else if (st === 'SAKIT') {
+                        code = 'S';
+                    } else if (st === 'CUTI') {
+                        code = 'C';
+                    } else if (st === 'ALPA') {
+                        code = info.isLibur ? 'L' : 'A';
+                    } else if (r.jamMasuk && r.jamMasuk !== '--:--' && r.jamMasuk !== '-') {
+                        code = 'H';
+                    }
+                }
+
+                // Jika belum ada status dari riwayat
+                if (code === '-') {
+                    if (info.isLibur) {
+                        code = 'L';
+                    } else {
+                        // Hari kerja: cek izin / sakit / cuti yang disetujui
+                        const allIzin = [...(this.mockData?.izinAdmin || []), ...(this.mockData?.izin || [])];
+                        const izinItem = allIzin.find(item => {
+                            const matchGuru = (item.nip && (item.nip === nip || item.nip === guru.nip || item.nip === guru.username)) ||
+                                              (item.nama && nama && item.nama.trim().toLowerCase() === nama.trim().toLowerCase());
+                            if (!matchGuru) return false;
+                            const status = (item.status || '').toUpperCase();
+                            if (status !== 'DISETUJUI') return false;
+                            return this.isDateInRange(info.checkDate, item.tglMulai, item.tglSelesai);
+                        });
+
+                        if (izinItem) {
+                            const j = (izinItem.jenis || '').toUpperCase();
+                            if (j === 'CUTI') code = 'C';
+                            else if (j === 'SAKIT') code = 'S';
+                            else code = 'I';
+                        } else {
+                            // Cek pengajuan koreksi / izin yang masih pending (K)
+                            const pendingItem = allIzin.find(item => {
+                                const matchGuru = (item.nip && (item.nip === nip || item.nip === guru.nip || item.nip === guru.username)) ||
+                                                  (item.nama && nama && item.nama.trim().toLowerCase() === nama.trim().toLowerCase());
+                                if (!matchGuru) return false;
+                                const status = (item.status || '').toUpperCase();
+                                const isPending = (status === 'MENUNGGU' || status === 'PENDING' || status.includes('MENUNGGU'));
+                                return isPending && this.isDateInRange(info.checkDate, item.tglMulai, item.tglSelesai);
+                            });
+
+                            if (pendingItem) {
+                                code = 'K';
+                            } else {
+                                // Evaluasi batas waktu untuk tanggal hari ini / masa depan / masa lalu
+                                if (curDateOnly > todayDateOnly) {
+                                    code = '-'; // Hari kerja di masa depan
+                                } else if (curDateOnly.getTime() === todayDateOnly.getTime()) {
+                                    // Hari ini: periksa jam kerja selesai
+                                    const shiftRaw = String(guru.shift || guru.shiftKerja || guru.jamKerja || 'Pagi').trim().toLowerCase();
+                                    const isSiang = shiftRaw.includes('siang');
+                                    const dayOfWeek = info.checkDate.getDay();
+                                    const cfgLokasi = this.mockData?.lokasiDanJamKerja || {};
+                                    const cfgJk = cfgLokasi.jamKerja || {};
+                                    const shiftCfg = isSiang ? (cfgJk.siang || {}) : (cfgJk.pagi || {});
+                                    let defaultPulang = isSiang ? (dayOfWeek === 5 ? '17:30' : '17:00') : (dayOfWeek === 5 ? '11:30' : '12:00');
+                                    let jamPulangStr = defaultPulang;
+                                    if (dayOfWeek === 5) jamPulangStr = shiftCfg.jumat?.pulang || defaultPulang;
+                                    else if (dayOfWeek === 6) jamPulangStr = shiftCfg.sabtu?.pulang || defaultPulang;
+                                    else jamPulangStr = shiftCfg.seninKamis?.pulang || defaultPulang;
+
+                                    let [hP, mP] = (jamPulangStr || defaultPulang).split(':').map(Number);
+                                    if (isNaN(hP)) hP = isSiang ? 17 : (dayOfWeek === 5 ? 11 : 12);
+                                    if (isNaN(mP)) mP = 0;
+                                    let jamKerjaSelesaiTotalMin = (hP * 60) + mP;
+                                    if (!isSiang) {
+                                        const minSelesaiPagi = (dayOfWeek === 6 ? 13 : 14) * 60;
+                                        jamKerjaSelesaiTotalMin = Math.max(minSelesaiPagi, jamKerjaSelesaiTotalMin);
+                                    }
+
+                                    if (currentTotalMin < jamKerjaSelesaiTotalMin) {
+                                        code = '-';
+                                    } else {
+                                        code = 'A';
+                                    }
+                                } else {
+                                    // Hari kerja lampau tanpa presensi/keterangan
+                                    code = 'A';
+                                }
+                            }
+                        }
+                    }
+                }
+
+                dailyCodes[d] = code;
+                if (code === 'H') hadir++;
+                else if (code === 'T') terlambat++;
+                else if (code === 'I') izin++;
+                else if (code === 'S') sakit++;
+                else if (code === 'C') cuti++;
+                else if (code === 'A') alpa++;
+            }
+
+            rekapGuruList.push({
+                no: idx + 1,
+                nip,
+                nama,
+                jabatan,
+                dailyCodes,
+                hadir,
+                terlambat,
+                izin,
+                sakit,
+                cuti,
+                alpa,
+                hariKerja: totalHariKerjaEfektif
+            });
+        });
+
+        // 5. Terapkan filter status jika dipilih
+        let finalExportList = rekapGuruList;
+        if (filterStatus) {
+            const fsUpper = filterStatus.toUpperCase();
+            finalExportList = finalExportList.filter(item => {
+                if (fsUpper === 'HADIR') return item.hadir > 0;
+                if (fsUpper === 'TERLAMBAT') return item.terlambat > 0;
+                if (fsUpper === 'IZIN') return item.izin > 0;
+                if (fsUpper === 'SAKIT') return item.sakit > 0;
+                if (fsUpper === 'CUTI') return item.cuti > 0;
+                if (fsUpper === 'ALPA') return item.alpa > 0;
+                return true;
+            });
+        }
+
+        if (finalExportList.length === 0) {
+            return this.showToast('Tidak ada data presensi yang sesuai dengan filter untuk diekspor.', 'info', 'text-yellow-400');
+        }
+
+        this.showToast('Menyiapkan file Excel profesional...', 'hourglass_top', 'text-blue-400');
+
+        // Helper konversi indeks kolom angka ke huruf Excel (0 -> A, 1 -> B, ...)
+        const getColLetter = (n) => {
+            let s = '';
+            while (n >= 0) {
+                s = String.fromCharCode((n % 26) + 65) + s;
+                n = Math.floor(n / 26) - 1;
+            }
+            return s;
+        };
+
+        const thinBorder = {
+            top: { style: 'thin', color: { rgb: 'D1D5DB' } },
+            bottom: { style: 'thin', color: { rgb: 'D1D5DB' } },
+            left: { style: 'thin', color: { rgb: 'D1D5DB' } },
+            right: { style: 'thin', color: { rgb: 'D1D5DB' } }
+        };
+
+        const headerBorder = {
+            top: { style: 'thin', color: { rgb: '15803D' } },
+            bottom: { style: 'medium', color: { rgb: '14532D' } },
+            left: { style: 'thin', color: { rgb: '15803D' } },
+            right: { style: 'thin', color: { rgb: '15803D' } }
+        };
+
+        // Palet warna status lembut (pastel)
+        const statusStyles = {
+            'H': { fill: { fgColor: { rgb: 'DCFCE7' } }, font: { bold: true, color: { rgb: '15803D' }, name: 'Arial', sz: 9 } },
+            'T': { fill: { fgColor: { rgb: 'FEF9C3' } }, font: { bold: true, color: { rgb: '854D0E' }, name: 'Arial', sz: 9 } },
+            'I': { fill: { fgColor: { rgb: 'DBEAFE' } }, font: { bold: true, color: { rgb: '1E40AF' }, name: 'Arial', sz: 9 } },
+            'S': { fill: { fgColor: { rgb: 'F3E8FF' } }, font: { bold: true, color: { rgb: '6B21A8' }, name: 'Arial', sz: 9 } },
+            'C': { fill: { fgColor: { rgb: 'CCFBF1' } }, font: { bold: true, color: { rgb: '0F766E' }, name: 'Arial', sz: 9 } },
+            'A': { fill: { fgColor: { rgb: 'FEE2E2' } }, font: { bold: true, color: { rgb: 'B91C1C' }, name: 'Arial', sz: 9 } },
+            'L': { fill: { fgColor: { rgb: 'F3F4F6' } }, font: { bold: true, color: { rgb: '6B7280' }, name: 'Arial', sz: 9 } },
+            'K': { fill: { fgColor: { rgb: 'FFEDD5' } }, font: { bold: true, color: { rgb: 'C2410C' }, name: 'Arial', sz: 9 } },
+            '-': { fill: { fgColor: { rgb: 'FAFAFA' } }, font: { color: { rgb: '9CA3AF' }, name: 'Arial', sz: 9 } }
+        };
+
+        const wb = XLSX.utils.book_new();
+
+        // ==========================================================
+        // WORKSHEET 1: DETAIL PRESENSI
+        // ==========================================================
+        const ws1 = {};
+
+        // Judul & Identitas Laporan
+        ws1['A1'] = { v: 'REKAPITULASI PRESENSI BULANAN GURU', t: 's', s: { font: { bold: true, sz: 14, color: { rgb: '166534' }, name: 'Arial' } } };
+        ws1['A2'] = { v: schoolName.toUpperCase(), t: 's', s: { font: { bold: true, sz: 11, color: { rgb: '374151' }, name: 'Arial' } } };
+        let filterDesc = `Periode: ${bulanText} ${tahunText}`;
+        if (filterStatus) filterDesc += ` | Filter Status: ${filterStatus}`;
+        if (filterGuru) filterDesc += ` | Pencarian: "${filterGuru}"`;
+        ws1['A3'] = { v: filterDesc, t: 's', s: { font: { italic: true, sz: 10, color: { rgb: '6B7280' }, name: 'Arial' } } };
+
+        // Header Tabel (Baris ke-5, 0-indexed r = 4)
+        const headerRowIdx = 4;
+        const colHeaders1 = ['No.', 'NIP', 'Nama Guru'];
+        for (let d = 1; d <= totalDays; d++) {
+            colHeaders1.push(`Tgl ${d}`);
+        }
+        colHeaders1.push('Hadir', 'Terlambat', 'Izin', 'Sakit', 'Cuti', 'Alpa', 'Hari Kerja');
+
+        colHeaders1.forEach((hText, cIdx) => {
+            const cellKey = getColLetter(cIdx) + (headerRowIdx + 1);
+            ws1[cellKey] = {
+                v: hText,
+                t: 's',
+                s: {
+                    fill: { fgColor: { rgb: '166534' } },
+                    font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 10, name: 'Arial' },
+                    alignment: { horizontal: 'center', vertical: 'center', wrapText: true },
+                    border: headerBorder
+                }
+            };
+        });
+
+        // Baris Data Guru
+        let currentRow1 = headerRowIdx + 1;
+        const totals1 = {
+            hadir: 0,
+            terlambat: 0,
+            izin: 0,
+            sakit: 0,
+            cuti: 0,
+            alpa: 0
+        };
+
+        finalExportList.forEach((item, index) => {
+            const rNum = currentRow1 + 1;
+            const zebraBg = (index % 2 === 1) ? 'F9FAFB' : 'FFFFFF';
+            const baseFont = { name: 'Arial', sz: 9.5 };
+
+            // Kolom No.
+            ws1[getColLetter(0) + rNum] = {
+                v: index + 1,
+                t: 'n',
+                s: {
+                    alignment: { horizontal: 'center', vertical: 'center' },
+                    fill: { fgColor: { rgb: zebraBg } },
+                    font: baseFont,
+                    border: thinBorder
+                }
+            };
+
+            // Kolom NIP (Disimpan sebagai teks agar digit utuh)
+            ws1[getColLetter(1) + rNum] = {
+                v: String(item.nip),
+                t: 's',
+                z: '@',
+                s: {
+                    alignment: { horizontal: 'center', vertical: 'center' },
+                    fill: { fgColor: { rgb: zebraBg } },
+                    font: baseFont,
+                    border: thinBorder
+                }
+            };
+
+            // Kolom Nama Guru (Rata Kiri)
+            ws1[getColLetter(2) + rNum] = {
+                v: item.nama,
+                t: 's',
+                s: {
+                    alignment: { horizontal: 'left', vertical: 'center' },
+                    fill: { fgColor: { rgb: zebraBg } },
+                    font: { bold: true, name: 'Arial', sz: 9.5, color: { rgb: '1F2937' } },
+                    border: thinBorder
+                }
+            };
+
+            // Kolom Tanggal Dinamis (Tgl 1 .. totalDays)
+            for (let d = 1; d <= totalDays; d++) {
+                const code = item.dailyCodes[d] || '-';
+                const stStyle = statusStyles[code] || statusStyles['-'];
+                ws1[getColLetter(2 + d) + rNum] = {
+                    v: code,
+                    t: 's',
+                    s: {
+                        fill: stStyle.fill,
+                        font: stStyle.font,
+                        alignment: { horizontal: 'center', vertical: 'center' },
+                        border: thinBorder
+                    }
+                };
+            }
+
+            // Kolom Rekapitulasi (Kanan)
+            const rekapStartCol = 3 + totalDays;
+            const rekapVals = [
+                { val: item.hadir, col: '15803D' },
+                { val: item.terlambat, col: '854D0E' },
+                { val: item.izin, col: '1E40AF' },
+                { val: item.sakit, col: '6B21A8' },
+                { val: item.cuti, col: '0F766E' },
+                { val: item.alpa, col: 'B91C1C' },
+                { val: item.hariKerja, col: '374151' }
+            ];
+
+            totals1.hadir += item.hadir;
+            totals1.terlambat += item.terlambat;
+            totals1.izin += item.izin;
+            totals1.sakit += item.sakit;
+            totals1.cuti += item.cuti;
+            totals1.alpa += item.alpa;
+
+            rekapVals.forEach((rv, rIdx) => {
+                ws1[getColLetter(rekapStartCol + rIdx) + rNum] = {
+                    v: rv.val,
+                    t: 'n',
+                    s: {
+                        font: { bold: true, color: { rgb: rv.col }, name: 'Arial', sz: 9.5 },
+                        alignment: { horizontal: 'center', vertical: 'center' },
+                        fill: { fgColor: { rgb: zebraBg } },
+                        border: thinBorder
+                    }
+                };
+            });
+
+            currentRow1++;
+        });
+
+        // Baris Total di Bawah Tabel
+        const totalRowIdx1 = currentRow1 + 1;
+        const totalStyle = {
+            fill: { fgColor: { rgb: 'ECFDF5' } },
+            font: { bold: true, name: 'Arial', sz: 9.5, color: { rgb: '166534' } },
+            border: {
+                top: { style: 'medium', color: { rgb: '15803D' } },
+                bottom: { style: 'medium', color: { rgb: '15803D' } },
+                left: { style: 'thin', color: { rgb: 'D1D5DB' } },
+                right: { style: 'thin', color: { rgb: 'D1D5DB' } }
+            }
+        };
+
+        ws1[getColLetter(0) + totalRowIdx1] = { v: '', t: 's', s: totalStyle };
+        ws1[getColLetter(1) + totalRowIdx1] = { v: '', t: 's', s: totalStyle };
+        ws1[getColLetter(2) + totalRowIdx1] = { v: 'TOTAL KESELURUHAN', t: 's', s: { ...totalStyle, alignment: { horizontal: 'right', vertical: 'center' } } };
+
+        for (let d = 1; d <= totalDays; d++) {
+            let hadirToday = 0;
+            finalExportList.forEach(g => {
+                const c = g.dailyCodes[d];
+                if (c === 'H' || c === 'T') hadirToday++;
+            });
+            ws1[getColLetter(2 + d) + totalRowIdx1] = {
+                v: hadirToday,
+                t: 'n',
+                s: { ...totalStyle, alignment: { horizontal: 'center', vertical: 'center' } }
+            };
+        }
+
+        const rekapStartCol = 3 + totalDays;
+        [totals1.hadir, totals1.terlambat, totals1.izin, totals1.sakit, totals1.cuti, totals1.alpa, totalHariKerjaEfektif].forEach((tv, idx) => {
+            ws1[getColLetter(rekapStartCol + idx) + totalRowIdx1] = {
+                v: tv,
+                t: 'n',
+                s: { ...totalStyle, alignment: { horizontal: 'center', vertical: 'center' } }
+            };
+        });
+
+        // Legenda Kode Status Presensi (di bagian bawah tabel)
+        let legRow = totalRowIdx1 + 2;
+        ws1['A' + legRow] = {
+            v: 'LEGENDA KODE STATUS PRESENSI:',
+            t: 's',
+            s: { font: { bold: true, sz: 10, color: { rgb: '166534' }, name: 'Arial' } }
+        };
+
+        const legendaItems = [
+            { code: 'H', desc: 'Hadir (Tepat Waktu)', ...statusStyles['H'] },
+            { code: 'T', desc: 'Terlambat', ...statusStyles['T'] },
+            { code: 'I', desc: 'Izin (Disetujui)', ...statusStyles['I'] },
+            { code: 'S', desc: 'Sakit (Disetujui)', ...statusStyles['S'] },
+            { code: 'C', desc: 'Cuti (Disetujui)', ...statusStyles['C'] },
+            { code: 'A', desc: 'Alpa (Tanpa Keterangan)', ...statusStyles['A'] },
+            { code: 'L', desc: 'Hari Libur (Mingguan / Khusus)', ...statusStyles['L'] },
+            { code: 'K', desc: 'Koreksi / Izin Menunggu', ...statusStyles['K'] },
+            { code: '-', desc: 'Belum Ada Status Final', ...statusStyles['-'] }
+        ];
+
+        legRow++;
+        legendaItems.forEach((item, idx) => {
+            const lR = legRow + Math.floor(idx / 3);
+            const colGroup = (idx % 3);
+            const badgeCol = colGroup * 4;
+            const descCol = badgeCol + 1;
+
+            ws1[getColLetter(badgeCol) + lR] = {
+                v: item.code,
+                t: 's',
+                s: {
+                    fill: item.fill,
+                    font: item.font,
+                    alignment: { horizontal: 'center', vertical: 'center' },
+                    border: thinBorder
+                }
+            };
+            ws1[getColLetter(descCol) + lR] = {
+                v: '= ' + item.desc,
+                t: 's',
+                s: { font: { sz: 9, name: 'Arial', color: { rgb: '374151' } } }
+            };
+        });
+
+        const maxRow1 = legRow + 3;
+        ws1['!ref'] = `A1:${getColLetter(colHeaders1.length - 1)}${maxRow1}`;
+
+        // Lebar Kolom Sheet 1
+        const cols1 = [
+            { wch: 5.5 }, // No.
+            { wch: 21 },  // NIP
+            { wch: 28 }   // Nama Guru
+        ];
+        for (let d = 1; d <= totalDays; d++) {
+            cols1.push({ wch: 5.2 }); // Tgl 1..totalDays
+        }
+        for (let i = 0; i < 7; i++) {
+            cols1.push({ wch: 11 }); // Rekap columns
+        }
+        ws1['!cols'] = cols1;
+
+        // Bekukan baris header & identitas guru (3 kolom pertama)
+        ws1['!views'] = [{ state: 'frozen', xSplit: 3, ySplit: headerRowIdx + 1 }];
+
+        // Autofilter pada baris tabel
+        ws1['!autofilter'] = { ref: `A${headerRowIdx + 1}:${getColLetter(colHeaders1.length - 1)}${totalRowIdx1 - 1}` };
+
+        // Pengaturan Cetak Sheet 1 (Landscape, A4, Fit to width)
+        ws1['!pageSetup'] = {
+            orientation: 'landscape',
+            paperSize: 9,
+            fitToWidth: 1,
+            fitToHeight: 0
+        };
+
+        XLSX.utils.book_append_sheet(wb, ws1, "Detail Presensi");
+
+        // ==========================================================
+        // WORKSHEET 2: STATISTIK PRESENSI
+        // ==========================================================
+        const ws2 = {};
+
+        ws2['A1'] = { v: 'STATISTIK & RINGKASAN PRESENSI GURU', t: 's', s: { font: { bold: true, sz: 14, color: { rgb: '166534' }, name: 'Arial' } } };
+        ws2['A2'] = { v: schoolName.toUpperCase(), t: 's', s: { font: { bold: true, sz: 11, color: { rgb: '374151' }, name: 'Arial' } } };
+        ws2['A3'] = { v: `Periode: ${bulanText} ${tahunText}`, t: 's', s: { font: { italic: true, sz: 10, color: { rgb: '6B7280' }, name: 'Arial' } } };
+
+        // Tabel Ringkasan KPI Sekolah
+        ws2['A5'] = { v: 'RINGKASAN TOTAL SEKOLAH', t: 's', s: { font: { bold: true, sz: 11, color: { rgb: '166534' }, name: 'Arial' } } };
+
+        const kpiHeaders = ['Indikator', 'Jumlah', 'Keterangan'];
+        kpiHeaders.forEach((kh, kIdx) => {
+            ws2[getColLetter(kIdx) + '6'] = {
+                v: kh,
+                t: 's',
+                s: {
+                    fill: { fgColor: { rgb: '166534' } },
+                    font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 10, name: 'Arial' },
+                    alignment: { horizontal: 'center', vertical: 'center' },
+                    border: headerBorder
+                }
+            };
+        });
+
+        const totalGuruAktif = finalExportList.length;
+        const totalPotensialKehadiran = totalGuruAktif * totalHariKerjaEfektif;
+        const totalHadirPlusTerlambat = totals1.hadir + totals1.terlambat;
+        const schoolAttendancePct = totalPotensialKehadiran > 0 
+            ? ((totalHadirPlusTerlambat / totalPotensialKehadiran) * 100).toFixed(1) + '%' 
+            : '0%';
+
+        const kpiRows = [
+            { label: 'Jumlah Guru Aktif', val: totalGuruAktif, desc: 'Total guru aktif dievaluasi' },
+            { label: 'Hari Kerja Efektif', val: totalHariKerjaEfektif, desc: 'Hari kerja operasional (non-libur) bulan ini' },
+            { label: 'Total Hadir (H)', val: totals1.hadir, desc: 'Akumulasi presensi hadir tepat waktu' },
+            { label: 'Total Terlambat (T)', val: totals1.terlambat, desc: 'Akumulasi presensi hadir terlambat' },
+            { label: 'Total Izin (I)', val: totals1.izin, desc: 'Akumulasi izin yang disetujui' },
+            { label: 'Total Sakit (S)', val: totals1.sakit, desc: 'Akumulasi sakit yang disetujui' },
+            { label: 'Total Cuti (C)', val: totals1.cuti, desc: 'Akumulasi cuti yang disetujui' },
+            { label: 'Total Alpa (A)', val: totals1.alpa, desc: 'Akumulasi tanpa keterangan pada hari kerja' },
+            { label: 'Rata-rata Tingkat Kehadiran', val: schoolAttendancePct, desc: '(Total Hadir + Terlambat) / (Guru × Hari Kerja)' }
+        ];
+
+        kpiRows.forEach((row, kIdx) => {
+            const rNum = 7 + kIdx;
+            const zBg = (kIdx % 2 === 1) ? 'F9FAFB' : 'FFFFFF';
+            ws2['A' + rNum] = { v: row.label, t: 's', s: { font: { bold: true, name: 'Arial', sz: 9.5, color: { rgb: '374151' } }, fill: { fgColor: { rgb: zBg } }, border: thinBorder } };
+            ws2['B' + rNum] = { v: row.val, t: typeof row.val === 'number' ? 'n' : 's', s: { alignment: { horizontal: 'center' }, font: { bold: true, name: 'Arial', sz: 9.5, color: { rgb: '166534' } }, fill: { fgColor: { rgb: zBg } }, border: thinBorder } };
+            ws2['C' + rNum] = { v: row.desc, t: 's', s: { font: { name: 'Arial', sz: 9, color: { rgb: '6B7280' } }, fill: { fgColor: { rgb: zBg } }, border: thinBorder } };
+        });
+
+        // Tabel Detail Statistik Per Guru
+        const startGuruStatRow = 18;
+        ws2['A' + startGuruStatRow] = { v: 'DETAIL STATISTIK PRESENSI PER GURU', t: 's', s: { font: { bold: true, sz: 11, color: { rgb: '166534' }, name: 'Arial' } } };
+
+        const guruStatHeaders = ['No.', 'NIP', 'Nama Guru', 'Jabatan', 'Hadir', 'Terlambat', 'Izin', 'Sakit', 'Cuti', 'Alpa', 'Hari Kerja', '% Kehadiran'];
+        const statHeaderRow = startGuruStatRow + 1;
+
+        guruStatHeaders.forEach((gh, gIdx) => {
+            ws2[getColLetter(gIdx) + statHeaderRow] = {
+                v: gh,
+                t: 's',
+                s: {
+                    fill: { fgColor: { rgb: '166534' } },
+                    font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 10, name: 'Arial' },
+                    alignment: { horizontal: 'center', vertical: 'center' },
+                    border: headerBorder
+                }
+            };
+        });
+
+        let curStatRow = statHeaderRow + 1;
+        finalExportList.forEach((item, index) => {
+            const rNum = curStatRow;
+            const zBg = (index % 2 === 1) ? 'F9FAFB' : 'FFFFFF';
+            const guruPct = totalHariKerjaEfektif > 0 
+                ? (((item.hadir + item.terlambat) / totalHariKerjaEfektif) * 100).toFixed(1) + '%'
+                : '0%';
+
+            ws2['A' + rNum] = { v: index + 1, t: 'n', s: { alignment: { horizontal: 'center' }, fill: { fgColor: { rgb: zBg } }, border: thinBorder, font: { name: 'Arial', sz: 9.5 } } };
+            ws2['B' + rNum] = { v: String(item.nip), t: 's', z: '@', s: { alignment: { horizontal: 'center' }, fill: { fgColor: { rgb: zBg } }, border: thinBorder, font: { name: 'Arial', sz: 9.5 } } };
+            ws2['C' + rNum] = { v: item.nama, t: 's', s: { alignment: { horizontal: 'left' }, font: { bold: true, name: 'Arial', sz: 9.5, color: { rgb: '1F2937' } }, fill: { fgColor: { rgb: zBg } }, border: thinBorder } };
+            ws2['D' + rNum] = { v: item.jabatan, t: 's', s: { alignment: { horizontal: 'center' }, font: { name: 'Arial', sz: 9, color: { rgb: '4B5563' } }, fill: { fgColor: { rgb: zBg } }, border: thinBorder } };
+            ws2['E' + rNum] = { v: item.hadir, t: 'n', s: { alignment: { horizontal: 'center' }, font: { bold: true, color: { rgb: '15803D' }, name: 'Arial', sz: 9.5 }, fill: { fgColor: { rgb: zBg } }, border: thinBorder } };
+            ws2['F' + rNum] = { v: item.terlambat, t: 'n', s: { alignment: { horizontal: 'center' }, font: { bold: true, color: { rgb: '854D0E' }, name: 'Arial', sz: 9.5 }, fill: { fgColor: { rgb: zBg } }, border: thinBorder } };
+            ws2['G' + rNum] = { v: item.izin, t: 'n', s: { alignment: { horizontal: 'center' }, font: { bold: true, color: { rgb: '1E40AF' }, name: 'Arial', sz: 9.5 }, fill: { fgColor: { rgb: zBg } }, border: thinBorder } };
+            ws2['H' + rNum] = { v: item.sakit, t: 'n', s: { alignment: { horizontal: 'center' }, font: { bold: true, color: { rgb: '6B21A8' }, name: 'Arial', sz: 9.5 }, fill: { fgColor: { rgb: zBg } }, border: thinBorder } };
+            ws2['I' + rNum] = { v: item.cuti, t: 'n', s: { alignment: { horizontal: 'center' }, font: { bold: true, color: { rgb: '0F766E' }, name: 'Arial', sz: 9.5 }, fill: { fgColor: { rgb: zBg } }, border: thinBorder } };
+            ws2['J' + rNum] = { v: item.alpa, t: 'n', s: { alignment: { horizontal: 'center' }, font: { bold: true, color: { rgb: 'B91C1C' }, name: 'Arial', sz: 9.5 }, fill: { fgColor: { rgb: zBg } }, border: thinBorder } };
+            ws2['K' + rNum] = { v: totalHariKerjaEfektif, t: 'n', s: { alignment: { horizontal: 'center' }, font: { bold: true, color: { rgb: '374151' }, name: 'Arial', sz: 9.5 }, fill: { fgColor: { rgb: zBg } }, border: thinBorder } };
+            ws2['L' + rNum] = { v: guruPct, t: 's', s: { alignment: { horizontal: 'center' }, font: { bold: true, color: { rgb: '166534' }, name: 'Arial', sz: 9.5 }, fill: { fgColor: { rgb: zBg } }, border: thinBorder } };
+
+            curStatRow++;
+        });
+
+        // Baris Total Sheet 2
+        const totalStatRow = curStatRow;
+        ws2['A' + totalStatRow] = { v: '', t: 's', s: totalStyle };
+        ws2['B' + totalStatRow] = { v: '', t: 's', s: totalStyle };
+        ws2['C' + totalStatRow] = { v: 'TOTAL / RATA-RATA', t: 's', s: { ...totalStyle, alignment: { horizontal: 'right', vertical: 'center' } } };
+        ws2['D' + totalStatRow] = { v: '', t: 's', s: totalStyle };
+        ws2['E' + totalStatRow] = { v: totals1.hadir, t: 'n', s: { ...totalStyle, alignment: { horizontal: 'center' } } };
+        ws2['F' + totalStatRow] = { v: totals1.terlambat, t: 'n', s: { ...totalStyle, alignment: { horizontal: 'center' } } };
+        ws2['G' + totalStatRow] = { v: totals1.izin, t: 'n', s: { ...totalStyle, alignment: { horizontal: 'center' } } };
+        ws2['H' + totalStatRow] = { v: totals1.sakit, t: 'n', s: { ...totalStyle, alignment: { horizontal: 'center' } } };
+        ws2['I' + totalStatRow] = { v: totals1.cuti, t: 'n', s: { ...totalStyle, alignment: { horizontal: 'center' } } };
+        ws2['J' + totalStatRow] = { v: totals1.alpa, t: 'n', s: { ...totalStyle, alignment: { horizontal: 'center' } } };
+        ws2['K' + totalStatRow] = { v: totalHariKerjaEfektif, t: 'n', s: { ...totalStyle, alignment: { horizontal: 'center' } } };
+        ws2['L' + totalStatRow] = { v: schoolAttendancePct, t: 's', s: { ...totalStyle, alignment: { horizontal: 'center' } } };
+
+        ws2['!ref'] = `A1:L${totalStatRow + 2}`;
+        ws2['!cols'] = [
+            { wch: 6 },  // No
+            { wch: 21 }, // NIP
+            { wch: 28 }, // Nama Guru
+            { wch: 18 }, // Jabatan
+            { wch: 10 }, // Hadir
+            { wch: 11 }, // Terlambat
+            { wch: 10 }, // Izin
+            { wch: 10 }, // Sakit
+            { wch: 10 }, // Cuti
+            { wch: 10 }, // Alpa
+            { wch: 12 }, // Hari Kerja
+            { wch: 14 }  // % Kehadiran
+        ];
+
+        ws2['!views'] = [{ state: 'frozen', ySplit: statHeaderRow }];
+
+        ws2['!pageSetup'] = {
+            orientation: 'landscape',
+            paperSize: 9,
+            fitToWidth: 1,
+            fitToHeight: 0
+        };
+
+        XLSX.utils.book_append_sheet(wb, ws2, "Statistik Presensi");
+
+        // Generate dan Unduh File XLSX
+        const fileName = `Rekap_Presensi_Bulanan_${bulanText}_${tahunText}.xlsx`.replace(/\s+/g, '_');
+        XLSX.writeFile(wb, fileName);
+        this.showToast('Laporan Excel berhasil diunduh.', 'check_circle', 'text-green-400');
     },
 
     loadIzinAdmin() {
@@ -7720,8 +8403,12 @@ var app = {
                                 </select>
                                 <div class="relative flex-1 min-w-[200px]">
                                     <span class="material-icons-round absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 text-[18px]">search</span>
-                                    <input type="text" id="admin-riwayat-guru" onkeyup="app.loadRiwayatAdmin()" placeholder="Cari NIP Guru..." class="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-primary">
+                                    <input type="text" id="admin-riwayat-guru" onkeyup="app.loadRiwayatAdmin()" placeholder="Cari NIP atau Nama Guru..." class="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-primary">
                                 </div>
+                                <button type="button" onclick="app.downloadExcelRiwayatAdmin()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition shrink-0 shadow-sm transform active:scale-95 cursor-pointer" title="Download Rekap Presensi Excel">
+                                    <span class="material-icons-round text-[18px]">file_download</span>
+                                    <span>Download Excel</span>
+                                </button>
                             </div>
                             <div class="p-0 overflow-hidden">
                                 <div class="table-container">
