@@ -21,7 +21,15 @@
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:image" content="https://absenguru-eight.vercel.app/logo.png">
 
-    <link rel="manifest" href="manifest.json">
+    <!-- PWA Manifest (dimuat via HTTP/HTTPS agar tidak memicu CORS error pada file:/// lokal) -->
+    <script>
+        if (location.protocol === 'http:' || location.protocol === 'https:') {
+            const manifestLink = document.createElement('link');
+            manifestLink.rel = 'manifest';
+            manifestLink.href = 'manifest.json';
+            document.head.appendChild(manifestLink);
+        }
+    </script>
     <meta name="theme-color" content="#16a34a">
     <script>
         if ('serviceWorker' in navigator && (location.protocol === 'http:' || location.protocol === 'https:')) {
@@ -35,16 +43,72 @@
     <!-- Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet">
+    <!-- Suppress deprecated Mozilla MouseEvent properties before Leaflet -->
+    <script>
+        (function() {
+            if (typeof MouseEvent !== 'undefined' && MouseEvent.prototype) {
+                try {
+                    ['mozPressure', 'mozInputSource'].forEach(function(prop) {
+                        if (prop in MouseEvent.prototype) {
+                            Object.defineProperty(MouseEvent.prototype, prop, {
+                                get: function() { return undefined; },
+                                configurable: true,
+                                enumerable: false
+                            });
+                        }
+                    });
+                } catch (e) {}
+            }
+        })();
+    </script>
     <!-- Leaflet CSS & JS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-    <!-- Tailwind CSS -->
+    <!-- Clean Console Filter -->
     <script>
         (function() {
+            const filterTerms = [
+                'cdn.tailwindcss.com', 
+                'mozPressure', 
+                'mozInputSource', 
+                'Reporting Header', 
+                '@firebase/firestore', 
+                'Cloud Firestore backend', 
+                'permission-denied',
+                'Missing or insufficient permissions'
+            ];
+            const shouldFilter = (args) => {
+                if (!args || !args.length) return false;
+                for (let i = 0; i < args.length; i++) {
+                    const it = args[i];
+                    if (!it) continue;
+                    let str = '';
+                    if (typeof it === 'string') {
+                        str = it;
+                    } else if (typeof it === 'object') {
+                        str = (it.message || '') + ' ' + (it.code || '') + ' ' + (it.stack || '');
+                    }
+                    if (filterTerms.some(term => str.includes(term))) return true;
+                }
+                return false;
+            };
+
             const _origWarn = console.warn;
             console.warn = function(...args) {
-                if (args && args[0] && typeof args[0] === 'string' && args[0].includes('cdn.tailwindcss.com')) return;
+                if (shouldFilter(args)) return;
                 _origWarn.apply(console, args);
+            };
+
+            const _origInfo = console.info;
+            console.info = function(...args) {
+                if (shouldFilter(args)) return;
+                _origInfo.apply(console, args);
+            };
+
+            const _origError = console.error;
+            console.error = function(...args) {
+                if (shouldFilter(args)) return;
+                _origError.apply(console, args);
             };
         })();
     </script>
@@ -468,12 +532,16 @@ input[type="file"]::file-selector-button:hover {
             
             <div class="flex-1 overflow-y-auto p-4 pb-6">
                 <!-- Step 1: Lokasi -->
-                <h2 class="font-bold text-gray-800 mb-3 text-sm">1. Deteksi Lokasi</h2>
+                <h2 class="font-bold text-gray-800 mb-3 text-sm flex items-center justify-between">
+                    <span>1. Deteksi Lokasi Multi-GPS</span>
+                    <span class="text-[10px] bg-primary/10 text-primary font-semibold px-2 py-0.5 rounded-full">Multi-Lokasi GPS</span>
+                </h2>
                 <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-6">
                     <div class="p-4 flex items-start gap-3 border-b border-gray-100">
                         <span class="material-icons-round text-primary mt-1">location_on</span>
                         <div class="flex-1">
                             <h3 class="text-sm font-semibold text-gray-800 mb-1" id="gps-status-title">Mencari lokasi...</h3>
+                            <div id="gps-status-lokasi-badge" class="mb-2"></div>
                             <div class="text-xs text-gray-600 grid grid-cols-3 gap-1">
                                 <span>Latitude</span><span class="col-span-2" id="gps-lat">: -</span>
                                 <span>Longitude</span><span class="col-span-2" id="gps-lng">: -</span>
@@ -483,14 +551,27 @@ input[type="file"]::file-selector-button:hover {
                     </div>
                     <div class="p-4 bg-gray-50 flex items-center justify-between">
                         <div>
-                            <p class="text-xs text-gray-500 mb-1">Jarak dari lokasi sekolah</p>
+                            <p class="text-xs text-gray-500 mb-1">Status Kehadiran di Lokasi</p>
                             <p class="text-lg font-bold text-gray-800" id="gps-jarak">- meter</p>
-                            <p class="text-[10px] text-gray-400">Radius yang diperbolehkan <span id="gps-radius">100</span> meter</p>
+                            <p class="text-[10px] text-gray-500 font-medium" id="gps-radius-info">Radius yang diperbolehkan <span id="gps-radius">100</span> meter</p>
                         </div>
                         <div id="gps-icon-container" class="w-12 h-12 rounded-full bg-gray-200 flex items-center justify-center">
                             <span class="material-icons-round text-gray-500 animate-spin" id="gps-icon">sync</span>
                         </div>
                     </div>
+
+                    <!-- Multi-Location Status Comparison -->
+                    <div id="gps-multi-lokasi-box" class="p-3 bg-blue-50/70 border-t border-b border-blue-100 text-xs space-y-1.5">
+                        <div class="flex items-center justify-between" id="gps-box-lokasi-1">
+                            <span class="font-medium text-gray-700 flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0"></span> <span id="gps-lok1-nama">Lokasi GPS 1</span>:</span>
+                            <span id="gps-lok1-status" class="font-semibold text-gray-600">-</span>
+                        </div>
+                        <div class="flex items-center justify-between" id="gps-box-lokasi-2">
+                            <span class="font-medium text-gray-700 flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-orange-500 shrink-0"></span> <span id="gps-lok2-nama">Lokasi GPS 2</span>:</span>
+                            <span id="gps-lok2-status" class="font-semibold text-gray-600">-</span>
+                        </div>
+                    </div>
+
                     <div id="gps-msg-container" class="bg-gray-200 text-gray-600 text-xs text-center py-2 font-medium flex items-center justify-center gap-1">
                         <span class="material-icons-round text-[14px]">info</span> Mendapatkan koordinat GPS...
                     </div>
@@ -555,7 +636,9 @@ input[type="file"]::file-selector-button:hover {
                         <div class="grid grid-cols-3"><span class="text-gray-500">Tanggal</span><span class="col-span-2" id="konf-tgl">: -</span></div>
                         <div class="grid grid-cols-3"><span class="text-gray-500">Jam</span><span class="col-span-2" id="konf-jam">: -</span></div>
                         <div class="grid grid-cols-3"><span class="text-gray-500">Tipe</span><span class="col-span-2" id="konf-tipe">: -</span></div>
-                        <div class="grid grid-cols-3"><span class="text-gray-500">Lokasi</span><span class="col-span-2 text-xs mt-0.5" id="konf-lokasi">: -</span></div>
+                        <div class="grid grid-cols-3"><span class="text-gray-500">Titik GPS</span><span class="col-span-2 font-semibold text-primary" id="konf-titik-gps">: -</span></div>
+                        <div class="grid grid-cols-3"><span class="text-gray-500">Status Lokasi</span><span class="col-span-2 font-bold text-green-700" id="konf-status-lokasi">: -</span></div>
+                        <div class="grid grid-cols-3"><span class="text-gray-500">Koordinat</span><span class="col-span-2 text-xs mt-0.5" id="konf-lokasi">: -</span></div>
                         <div class="grid grid-cols-3"><span class="text-gray-500">Jarak</span><span class="col-span-2" id="konf-jarak">: -</span></div>
                     </div>
                 </div>
@@ -628,14 +711,19 @@ input[type="file"]::file-selector-button:hover {
     <script>
         // GANTI KONFIGURASI INI DENGAN FIREBASE PROJECT ANDA
         const firebaseConfig = {
-            apiKey: "AIzaSyDTA0sVAbLOfpYt4UAntCG0GIw-TVcl-qU",
-            authDomain: "absenguruonline-f1a3c.firebaseapp.com",
-            projectId: "absenguruonline-f1a3c",
-            storageBucket: "absenguruonline-f1a3c.firebasestorage.app",
-            messagingSenderId: "541284648661",
-            appId: "1:541284648661:web:d661a272a8758cb887c45c"
+            apiKey: "AIzaSyDL2IQTkYxcRl4XmEoOgf76CVVbj9qr6z0",
+            authDomain: "absensiguru-268d9.firebaseapp.com",
+            projectId: "absensiguru-268d9",
+            storageBucket: "absensiguru-268d9.firebasestorage.app",
+            messagingSenderId: "1014685328974",
+            appId: "1:1014685328974:web:031c9d916a8b3605ca051f"
         };
         firebase.initializeApp(firebaseConfig);
+        try {
+            if (typeof firebase.firestore.setLogLevel === 'function') {
+                firebase.firestore.setLogLevel('silent');
+            }
+        } catch(e) {}
         const db = firebase.firestore();
         const APP_STORAGE_KEY = 'absenguru_app_data_' + (firebaseConfig.projectId || 'default');
     </script>
@@ -688,11 +776,32 @@ var app = {
             }
         },
         lokasiDanJamKerja: {
-            namaLokasi: "SDN 1 Natar",
+            namaLokasi: "SDN 1 Natar (Lokasi 1)",
             alamatLokasi: "SDN 1 Natar, Lampung Selatan",
             lat: -5.257321,
             lng: 105.183421,
             radius: 100,
+            lokasi1: {
+                namaLokasi: "SDN 1 Natar (Lokasi 1)",
+                alamatLokasi: "SDN 1 Natar, Lampung Selatan",
+                lat: -5.257321,
+                lng: 105.183421,
+                radius: 100
+            },
+            lokasi2: {
+                aktif: true,
+                namaLokasi: "SDN 1 Natar (Lokasi 2 / Kampus B)",
+                alamatLokasi: "SDN 1 Natar Gedung 2, Lampung Selatan",
+                lat: -5.259100,
+                lng: 105.185200,
+                radius: 100
+            },
+            namaLokasi2: "SDN 1 Natar (Lokasi 2 / Kampus B)",
+            alamatLokasi2: "SDN 1 Natar Gedung 2, Lampung Selatan",
+            lat2: -5.259100,
+            lng2: 105.185200,
+            radius2: 100,
+            aktif2: true,
             jamKerja: {
                 pagi: {
                     seninKamis: { masuk: "07:30", pulang: "12:00" },
@@ -739,14 +848,7 @@ var app = {
             }
         }
         if (this.mockData.lokasiDanJamKerja) {
-            const lk = this.mockData.lokasiDanJamKerja;
-            if (lk.lat && lk.lng) {
-                this.presensiState.LOKASI_SEKOLAH = {
-                    lat: parseFloat(lk.lat),
-                    lng: parseFloat(lk.lng),
-                    radius: parseInt(lk.radius) || 100
-                };
-            }
+            this.syncLokasiSekolahState(this.mockData.lokasiDanJamKerja);
         }
 
         // 2. Mendengarkan perubahan dari Firebase (Sync Real-time)
@@ -922,13 +1024,7 @@ var app = {
                                 ...localLokasi,
                                 ...fbData.lokasiDanJamKerja
                             };
-                            if (this.mockData.lokasiDanJamKerja.lat && this.mockData.lokasiDanJamKerja.lng) {
-                                this.presensiState.LOKASI_SEKOLAH = {
-                                    lat: parseFloat(this.mockData.lokasiDanJamKerja.lat),
-                                    lng: parseFloat(this.mockData.lokasiDanJamKerja.lng),
-                                    radius: parseInt(this.mockData.lokasiDanJamKerja.radius) || 100
-                                };
-                            }
+                            this.syncLokasiSekolahState(this.mockData.lokasiDanJamKerja);
                         }
 
                         // Pertahankan schoolSettings lokal jika di mainState tidak ada atau data libur hilang
@@ -1121,13 +1217,7 @@ var app = {
             this._unsubPengaturanLokasi = db.collection('pengaturan').doc('lokasi').onSnapshot((doc) => {
                 if (doc.exists) {
                     this.mockData.lokasiDanJamKerja = { ...(this.mockData.lokasiDanJamKerja || {}), ...doc.data() };
-                    if (this.mockData.lokasiDanJamKerja.lat && this.mockData.lokasiDanJamKerja.lng) {
-                        this.presensiState.LOKASI_SEKOLAH = {
-                            lat: parseFloat(this.mockData.lokasiDanJamKerja.lat),
-                            lng: parseFloat(this.mockData.lokasiDanJamKerja.lng),
-                            radius: parseInt(this.mockData.lokasiDanJamKerja.radius) || 100
-                        };
-                    }
+                    this.syncLokasiSekolahState(this.mockData.lokasiDanJamKerja);
                     localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
                     if (this.state && this.state.currentScreen === 'admin-lokasi' && typeof this.renderPengaturanLokasi === 'function') {
                         this.renderPengaturanLokasi();
@@ -2460,7 +2550,8 @@ service cloud.firestore {
                 
                 if (d.presensi.jarak !== null && d.presensi.jarak !== undefined) {
                     document.getElementById('guru-dashboard-jarak').innerText = Math.round(d.presensi.jarak);
-                    document.getElementById('guru-dashboard-lokasi-status').innerText = 'Presensi hari ini tercatat';
+                    const locKet = d.presensi.keteranganLokasi ? ` (${d.presensi.keteranganLokasi})` : '';
+                    document.getElementById('guru-dashboard-lokasi-status').innerText = `Presensi hari ini tercatat${locKet}`;
                 } else {
                     document.getElementById('guru-dashboard-jarak').innerText = '-';
                     document.getElementById('guru-dashboard-lokasi-status').innerText = statUpper === 'ALPA' ? 'Waktu presensi telah berakhir' : 'Menunggu presensi hari ini';
@@ -2503,6 +2594,7 @@ service cloud.firestore {
             let todayPulang = '--:--';
             let todayStatus = 'Belum Presensi';
             let todayJarak = null;
+            let todayKetLokasi = '';
             
             if (todayRecord) {
                 const hasFoto = this.isPresensiAdaFoto(todayRecord);
@@ -2525,6 +2617,7 @@ service cloud.firestore {
                 }
 
                 todayJarak = todayRecord.jarakPulang !== null && todayRecord.jarakPulang !== undefined ? todayRecord.jarakPulang : todayRecord.jarakMasuk;
+                todayKetLokasi = todayRecord.lokasiPulang || todayRecord.lokasiMasuk || todayRecord.keteranganLokasi || (todayRecord.lokasiTerdeteksi ? `Lokasi GPS ${todayRecord.lokasiTerdeteksi}` : '');
             } else {
                 if (this.isHariLiburMingguan(now)) {
                     todayStatus = 'Libur Mingguan';
@@ -2564,12 +2657,58 @@ service cloud.firestore {
                 success: true, 
                 data: {
                     tanggal: todayStr,
-                    presensi: { masuk: todayMasuk, pulang: todayPulang, status: todayStatus, jarak: todayJarak },
+                    presensi: { masuk: todayMasuk, pulang: todayPulang, status: todayStatus, jarak: todayJarak, keteranganLokasi: todayKetLokasi, lokasiTerdeteksi: todayRecord?.lokasiTerdeteksi },
                     statistik: { hadir: myHadir, terlambat: myTerlambat, izin: myIzin, sakit: mySakit, cuti: myCuti, alpa: myAlpa }
                 }
             });
         }, 300);
         
+    },
+
+    // ==========================================
+    // SINKRONISASI MULTI-LOKASI SEKOLAH
+    // ==========================================
+    syncLokasiSekolahState(lk) {
+        if (!lk) return;
+        const lat1 = parseFloat(lk.lat !== undefined ? lk.lat : (lk.lat1 !== undefined ? lk.lat1 : -5.257321));
+        const lng1 = parseFloat(lk.lng !== undefined ? lk.lng : (lk.lng1 !== undefined ? lk.lng1 : 105.183421));
+        const radius1 = parseInt(lk.radius !== undefined ? lk.radius : (lk.radius1 !== undefined ? lk.radius1 : 100)) || 100;
+        const nama1 = (lk.namaLokasi || lk.namaLokasi1 || 'SDN 1 Natar (Lokasi 1)').trim();
+        const alamat1 = (lk.alamatLokasi || lk.alamatLokasi1 || '').trim();
+
+        const lk2 = lk.lokasi2 || {};
+        const aktif2 = (lk2.aktif !== undefined) ? !!lk2.aktif : (lk.aktif2 !== undefined ? !!lk.aktif2 : true);
+        const lat2 = parseFloat(lk2.lat !== undefined ? lk2.lat : (lk.lat2 !== undefined ? lk.lat2 : -5.259100));
+        const lng2 = parseFloat(lk2.lng !== undefined ? lk2.lng : (lk.lng2 !== undefined ? lk.lng2 : 105.185200));
+        const radius2 = parseInt(lk2.radius !== undefined ? lk2.radius : (lk.radius2 !== undefined ? lk.radius2 : 100)) || 100;
+        const nama2 = (lk2.namaLokasi || lk.namaLokasi2 || 'SDN 1 Natar (Lokasi 2 / Kampus B)').trim();
+        const alamat2 = (lk2.alamatLokasi || lk.alamatLokasi2 || '').trim();
+
+        this.presensiState.LOKASI_SEKOLAH = {
+            // Backward-compatibility keys
+            lat: lat1,
+            lng: lng1,
+            radius: radius1,
+            namaLokasi: nama1,
+            alamatLokasi: alamat1,
+
+            lokasi1: {
+                lat: lat1,
+                lng: lng1,
+                radius: radius1,
+                namaLokasi: nama1,
+                alamatLokasi: alamat1
+            },
+
+            lokasi2: {
+                aktif: aktif2,
+                lat: lat2,
+                lng: lng2,
+                radius: radius2,
+                namaLokasi: nama2,
+                alamatLokasi: alamat2
+            }
+        };
     },
 
     // ==========================================
@@ -2581,10 +2720,23 @@ service cloud.firestore {
         lng: 0,
         acc: 0,
         jarak: 0,
+        jarak1: 0,
+        jarak2: 0,
+        radiusSekolah: 100,
+        terdeteksiLokasi: 0,
+        namaLokasiTerdeteksi: '',
+        keteranganLokasi: '',
+        isDalamLokasi: false,
         fotoBase64: null,
         stream: null,
         lokasiValid: false,
-        LOKASI_SEKOLAH: { lat: -5.123456, lng: 105.123456, radius: 100 } // Sinkron dengan backend
+        LOKASI_SEKOLAH: { 
+            lat: -5.257321, 
+            lng: 105.183421, 
+            radius: 100,
+            lokasi1: { lat: -5.257321, lng: 105.183421, radius: 100, namaLokasi: "SDN 1 Natar (Lokasi 1)" },
+            lokasi2: { aktif: true, lat: -5.259100, lng: 105.185200, radius: 100, namaLokasi: "SDN 1 Natar (Lokasi 2 / Kampus B)" }
+        }
     },
 
     bukaPresensi(tipe) {
@@ -2654,11 +2806,32 @@ service cloud.firestore {
         const lngEl = document.getElementById('gps-lng');
         const accEl = document.getElementById('gps-acc');
         const jarakEl = document.getElementById('gps-jarak');
+        const radiusInfoEl = document.getElementById('gps-radius-info');
         const msgContainer = document.getElementById('gps-msg-container');
         const iconContainer = document.getElementById('gps-icon-container');
         const iconEl = document.getElementById('gps-icon');
+        const badgeEl = document.getElementById('gps-status-lokasi-badge');
+
+        const lok1NamaEl = document.getElementById('gps-lok1-nama');
+        const lok1StatusEl = document.getElementById('gps-lok1-status');
+        const lok2NamaEl = document.getElementById('gps-lok2-nama');
+        const lok2StatusEl = document.getElementById('gps-lok2-status');
+        const lok2BoxEl = document.getElementById('gps-box-lokasi-2');
+
+        const lok1 = this.presensiState.LOKASI_SEKOLAH?.lokasi1 || this.presensiState.LOKASI_SEKOLAH || { lat: -5.257321, lng: 105.183421, radius: 100, namaLokasi: 'Lokasi 1' };
+        const lok2 = this.presensiState.LOKASI_SEKOLAH?.lokasi2;
+        const isLok2Aktif = lok2 && (lok2.aktif !== false) && !isNaN(lok2.lat) && !isNaN(lok2.lng);
+
+        if (lok1NamaEl) lok1NamaEl.innerText = lok1.namaLokasi || 'Lokasi GPS 1';
+        if (lok2NamaEl) lok2NamaEl.innerText = lok2?.namaLokasi || 'Lokasi GPS 2';
+        if (lok2BoxEl) {
+            if (isLok2Aktif) lok2BoxEl.classList.remove('hidden');
+            else lok2BoxEl.classList.add('hidden');
+        }
 
         titleEl.innerText = 'Mencari lokasi...';
+        if (badgeEl) badgeEl.innerHTML = '';
+        if (radiusInfoEl) radiusInfoEl.innerText = 'Mengevaluasi titik GPS sekolah...';
         iconEl.innerText = 'sync';
         iconEl.classList.add('animate-spin');
         msgContainer.className = 'bg-gray-200 text-gray-600 text-xs text-center py-2 font-medium flex items-center justify-center gap-1';
@@ -2705,10 +2878,90 @@ service cloud.firestore {
                     accWarning = true;
                 }
 
-                // Hitung jarak
-                const jarak = this.hitungJarakFrontend(lat, lng, this.presensiState.LOKASI_SEKOLAH.lat, this.presensiState.LOKASI_SEKOLAH.lng);
-                this.presensiState.jarak = jarak;
-                jarakEl.innerText = `${Math.round(jarak)} meter`;
+                // ==========================================
+                // EVALUASI MULTI-LOKASI GPS (LOKASI 1 & LOKASI 2)
+                // ==========================================
+                const jarak1 = this.hitungJarakFrontend(lat, lng, lok1.lat, lok1.lng);
+                const inRadius1 = jarak1 <= lok1.radius;
+
+                let jarak2 = null;
+                let inRadius2 = false;
+                if (isLok2Aktif) {
+                    jarak2 = this.hitungJarakFrontend(lat, lng, lok2.lat, lok2.lng);
+                    inRadius2 = jarak2 <= lok2.radius;
+                }
+
+                if (lok1StatusEl) {
+                    lok1StatusEl.innerHTML = `${Math.round(jarak1)}m (Rad: ${lok1.radius}m) ${inRadius1 ? '<span class="text-green-600 font-bold">✓ Di Lokasi</span>' : '<span class="text-gray-400">Di Luar</span>'}`;
+                }
+                if (lok2StatusEl && isLok2Aktif) {
+                    lok2StatusEl.innerHTML = `${Math.round(jarak2)}m (Rad: ${lok2.radius}m) ${inRadius2 ? '<span class="text-green-600 font-bold">✓ Di Lokasi</span>' : '<span class="text-gray-400">Di Luar</span>'}`;
+                }
+
+                // Jika guru berada di radius Lokasi 1 ATAU Lokasi 2 -> Tetap diakui BERADA DI LOKASI!
+                const isDalamLokasi = inRadius1 || inRadius2;
+                this.presensiState.isDalamLokasi = isDalamLokasi;
+
+                let terdeteksiIndex = 0;
+                let jarakTerpilih = jarak1;
+                let radiusTerpilih = lok1.radius;
+                let namaLokasiTerdeteksi = lok1.namaLokasi || 'Lokasi GPS 1';
+                let keteranganLokasi = '';
+
+                if (inRadius1 && inRadius2) {
+                    // Jika di dalam radius kedua lokasi, pilih yang terdekat
+                    if (jarak2 < jarak1) {
+                        terdeteksiIndex = 2;
+                        jarakTerpilih = jarak2;
+                        radiusTerpilih = lok2.radius;
+                        namaLokasiTerdeteksi = lok2.namaLokasi || 'Lokasi GPS 2';
+                        keteranganLokasi = `Lokasi GPS 2 (${namaLokasiTerdeteksi})`;
+                    } else {
+                        terdeteksiIndex = 1;
+                        jarakTerpilih = jarak1;
+                        radiusTerpilih = lok1.radius;
+                        namaLokasiTerdeteksi = lok1.namaLokasi || 'Lokasi GPS 1';
+                        keteranganLokasi = `Lokasi GPS 1 (${namaLokasiTerdeteksi})`;
+                    }
+                } else if (inRadius1) {
+                    terdeteksiIndex = 1;
+                    jarakTerpilih = jarak1;
+                    radiusTerpilih = lok1.radius;
+                    namaLokasiTerdeteksi = lok1.namaLokasi || 'Lokasi GPS 1';
+                    keteranganLokasi = `Lokasi GPS 1 (${namaLokasiTerdeteksi})`;
+                } else if (inRadius2) {
+                    terdeteksiIndex = 2;
+                    jarakTerpilih = jarak2;
+                    radiusTerpilih = lok2.radius;
+                    namaLokasiTerdeteksi = lok2.namaLokasi || 'Lokasi GPS 2';
+                    keteranganLokasi = `Lokasi GPS 2 (${namaLokasiTerdeteksi})`;
+                } else {
+                    // Di luar kedua radius lokasi
+                    terdeteksiIndex = 0;
+                    if (isLok2Aktif && jarak2 < jarak1) {
+                        jarakTerpilih = jarak2;
+                        radiusTerpilih = lok2.radius;
+                        namaLokasiTerdeteksi = lok2.namaLokasi || 'Lokasi GPS 2';
+                    } else {
+                        jarakTerpilih = jarak1;
+                        radiusTerpilih = lok1.radius;
+                        namaLokasiTerdeteksi = lok1.namaLokasi || 'Lokasi GPS 1';
+                    }
+                    keteranganLokasi = `Di Luar Radius (Terdekat: ${namaLokasiTerdeteksi})`;
+                }
+
+                this.presensiState.terdeteksiLokasi = terdeteksiIndex;
+                this.presensiState.namaLokasiTerdeteksi = namaLokasiTerdeteksi;
+                this.presensiState.keteranganLokasi = keteranganLokasi;
+                this.presensiState.jarak = jarakTerpilih;
+                this.presensiState.jarak1 = jarak1;
+                this.presensiState.jarak2 = jarak2;
+                this.presensiState.radiusSekolah = radiusTerpilih;
+
+                jarakEl.innerText = `${Math.round(jarakTerpilih)} meter`;
+                if (radiusInfoEl) {
+                    radiusInfoEl.innerHTML = `Radius diizinkan <span id="gps-radius">${radiusTerpilih}</span> meter (${terdeteksiIndex > 0 ? (terdeteksiIndex === 1 ? 'Lokasi 1' : 'Lokasi 2') : 'Terdekat'})`;
+                }
 
                 // Tidak memblokir, tetap ijinkan presensi
                 this.presensiState.lokasiValid = true;
@@ -2716,16 +2969,22 @@ service cloud.firestore {
                 iconEl.classList.remove('animate-spin');
                 
                 // Set status utama
-                if (jarak <= this.presensiState.LOKASI_SEKOLAH.radius) {
-                    titleEl.innerText = 'Lokasi Valid';
+                if (isDalamLokasi) {
+                    titleEl.innerText = 'Lokasi Valid (Berada di Lokasi)';
                     iconContainer.className = 'w-12 h-12 rounded-full bg-green-100 flex items-center justify-center text-green-600';
                     msgContainer.className = 'bg-green-100 text-green-700 text-xs text-center py-2 font-medium flex items-center justify-center gap-1';
-                    msgContainer.innerHTML = `<span class="material-icons-round text-[14px]">check_circle</span> Anda berada dalam radius presensi`;
+                    msgContainer.innerHTML = `<span class="material-icons-round text-[14px]">check_circle</span> <b>Anda Berada di Lokasi:</b> ${keteranganLokasi}`;
+                    if (badgeEl) {
+                        badgeEl.innerHTML = `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-green-100 text-green-800 border border-green-200"><span class="material-icons-round text-[14px]">verified</span> Berada di ${keteranganLokasi}</span>`;
+                    }
                 } else {
                     titleEl.innerText = 'Di Luar Radius';
                     iconContainer.className = 'w-12 h-12 rounded-full bg-yellow-100 flex items-center justify-center text-yellow-600';
                     msgContainer.className = 'bg-yellow-100 text-yellow-800 text-xs text-center py-2 font-medium flex items-center justify-center gap-1';
-                    msgContainer.innerHTML = `<span class="material-icons-round text-[14px]">warning</span> ⚠ Di luar radius sekolah.`;
+                    msgContainer.innerHTML = `<span class="material-icons-round text-[14px]">warning</span> ⚠ Di luar radius lokasi sekolah (${Math.round(jarakTerpilih)}m dari ${namaLokasiTerdeteksi}).`;
+                    if (badgeEl) {
+                        badgeEl.innerHTML = `<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold bg-yellow-100 text-yellow-800 border border-yellow-200"><span class="material-icons-round text-[14px]">warning</span> Di Luar Radius Sekolah</span>`;
+                    }
                 }
 
                 // Tampilkan peringatan akurasi (tanpa menimpa status jarak)
@@ -2844,6 +3103,19 @@ service cloud.firestore {
         document.getElementById('konf-lokasi').innerText = `: ${this.presensiState.lat.toFixed(6)}, ${this.presensiState.lng.toFixed(6)}`;
         document.getElementById('konf-jarak').innerText = `: ${Math.round(this.presensiState.jarak)} meter`;
 
+        const elTitik = document.getElementById('konf-titik-gps');
+        if (elTitik) elTitik.innerText = `: ${this.presensiState.keteranganLokasi || '-'}`;
+        const elStatus = document.getElementById('konf-status-lokasi');
+        if (elStatus) {
+            if (this.presensiState.isDalamLokasi) {
+                elStatus.innerText = `: Berada di Lokasi`;
+                elStatus.className = 'col-span-2 font-bold text-green-700';
+            } else {
+                elStatus.innerText = `: Di Luar Radius`;
+                elStatus.className = 'col-span-2 font-bold text-yellow-700';
+            }
+        }
+
         this.navigate('guru-konfirmasi');
     },
 
@@ -2856,9 +3128,10 @@ service cloud.firestore {
         const jamSekarang = new Date();
         const strJam = jamSekarang.toLocaleTimeString('id-ID').substring(0,5);
         const jarak = this.presensiState.jarak;
-        const radius = this.presensiState.LOKASI_SEKOLAH.radius;
+        const radius = this.presensiState.radiusSekolah || this.presensiState.LOKASI_SEKOLAH.radius;
         
-        let isLuarLokasi = jarak > radius;
+        // Multi-Lokasi: Jika guru berada di radius Lokasi 1 ATAU Lokasi 2, TIDAK dianggap luar lokasi!
+        let isLuarLokasi = !this.presensiState.isDalamLokasi;
         let isTerlambat = false;
         let isPulangCepat = false;
 
@@ -2959,10 +3232,13 @@ service cloud.firestore {
             lng: this.presensiState.lng,
             acc: this.presensiState.acc,
             jarak: this.presensiState.jarak,
-            radiusSekolah: this.presensiState.LOKASI_SEKOLAH.radius,
+            radiusSekolah: this.presensiState.radiusSekolah || this.presensiState.LOKASI_SEKOLAH.radius,
             status: this.presensiState.statusKondisi,
             alasan: this.presensiState.alasan,
-            foto: this.presensiState.fotoBase64
+            foto: this.presensiState.fotoBase64,
+            lokasiTerdeteksi: this.presensiState.terdeteksiLokasi || 0,
+            namaLokasi: this.presensiState.namaLokasiTerdeteksi || '',
+            keteranganLokasi: this.presensiState.keteranganLokasi || ''
         };
 
         const onSuccess = (res) => {
@@ -2973,11 +3249,12 @@ service cloud.firestore {
 
             if (res.success) {
                 this.navigate('guru-dashboard');
-                // Tampilkan pesan spesifik
+                // Tampilkan pesan spesifik dengan keterangan lokasi GPS
+                const locKet = payload.keteranganLokasi || 'Lokasi Sekolah';
                 if(payload.status === 'HADIR') {
-                    this.showToast('Presensi berhasil dicatat.', 'check_circle', 'text-green-400');
+                    this.showToast(`Presensi berhasil dicatat. Berada di ${locKet}.`, 'check_circle', 'text-green-400');
                 } else if(payload.status === 'TERLAMBAT') {
-                    this.showToast('Presensi berhasil dicatat sebagai terlambat.', 'warning', 'text-yellow-400');
+                    this.showToast(`Presensi terlambat dicatat di ${locKet}.`, 'warning', 'text-yellow-400');
                 } else {
                     this.showToast('Presensi berhasil dicatat. Data lokasi dan alasan telah disimpan.', 'info', 'text-blue-400');
                 }
@@ -3031,8 +3308,12 @@ service cloud.firestore {
                             updatePayload.jam_masuk = `${nowHour}:${nowMin}`;
                             updatePayload.fotoMasuk = payload.foto;
                             updatePayload.jarakMasuk = payload.jarak;
+                            updatePayload.lokasiMasuk = payload.keteranganLokasi || payload.namaLokasi;
+                            updatePayload.keteranganLokasi = payload.keteranganLokasi;
+                            updatePayload.namaLokasi = payload.namaLokasi;
+                            updatePayload.lokasiTerdeteksi = payload.lokasiTerdeteksi;
                             updatePayload.status = payload.status === 'HADIR' ? 'Hadir' : (payload.status.includes('TERLAMBAT') ? 'Terlambat' : 'Di Luar Lokasi');
-                            updatePayload.keterangan = 'Presensi Masuk Tercatat';
+                            updatePayload.keterangan = payload.keteranganLokasi ? `Presensi Masuk (${payload.keteranganLokasi})` : 'Presensi Masuk Tercatat';
                             
                             // Isi default jam pulang jika belum ada
                             if (!existingLocal || !existingLocal.jamPulang) {
@@ -3040,6 +3321,7 @@ service cloud.firestore {
                                 updatePayload.jam_pulang = '--:--';
                                 updatePayload.fotoPulang = '';
                                 updatePayload.jarakPulang = null;
+                                updatePayload.lokasiPulang = '';
                             }
                         } else if (payload.tipe === 'Pulang') {
                             const nowHour = now.getHours().toString().padStart(2, '0');
@@ -3048,6 +3330,10 @@ service cloud.firestore {
                             updatePayload.jam_pulang = `${nowHour}:${nowMin}`;
                             updatePayload.fotoPulang = payload.foto;
                             updatePayload.jarakPulang = payload.jarak;
+                            updatePayload.lokasiPulang = payload.keteranganLokasi || payload.namaLokasi;
+                            updatePayload.keteranganLokasi = payload.keteranganLokasi;
+                            updatePayload.namaLokasi = payload.namaLokasi;
+                            updatePayload.lokasiTerdeteksi = payload.lokasiTerdeteksi;
                             
                             let currentStatus = existingLocal ? existingLocal.status : 'Hadir';
                             if(currentStatus !== 'Terlambat' && currentStatus !== 'Di Luar Lokasi') {
@@ -4134,7 +4420,10 @@ service cloud.firestore {
                             <div class="text-gray-800 font-medium">${item.tanggal}</div>
                             <div class="text-gray-600">${item.jam_masuk}<br><span class="text-[8px] text-gray-400">Masuk</span></div>
                             <div class="text-gray-600">${item.jam_pulang}<br><span class="text-[8px] text-gray-400">Pulang</span></div>
-                            <div><span class="${badgeClass} px-1 py-1 rounded w-full block text-center uppercase tracking-tighter">${item.status || 'Alpa'}</span></div>
+                            <div>
+                                <span class="${badgeClass} px-1 py-1 rounded w-full block text-center uppercase tracking-tighter">${item.status || 'Alpa'}</span>
+                                ${item.keterangan_lokasi ? `<span class="text-[8px] text-primary block truncate font-semibold mt-0.5" title="${item.keterangan_lokasi}">${item.keterangan_lokasi}</span>` : ''}
+                            </div>
                             <div class="flex justify-center gap-2">
                                 ${item.foto_masuk ? `<button onclick="app.lihatFotoPresensi('${item.foto_masuk}')" class="text-primary hover:text-primary-dark" title="Foto Masuk"><span class="material-icons-round text-[16px]">login</span></button>` : ''}
                                 ${item.foto_pulang ? `<button onclick="app.lihatFotoPresensi('${item.foto_pulang}')" class="text-red-400 hover:text-red-600" title="Foto Pulang"><span class="material-icons-round text-[16px]">logout</span></button>` : ''}
@@ -4182,11 +4471,13 @@ service cloud.firestore {
                             jMasuk = shiftCfg.masuk || '07:30';
                         }
                     }
+                    const ketLok = r.lokasiMasuk || r.lokasiPulang || r.keteranganLokasi || (r.lokasiTerdeteksi ? `Lokasi GPS ${r.lokasiTerdeteksi}` : '');
                     return {
                         tanggal: r.tanggal || '-',
                         jam_masuk: jMasuk,
                         jam_pulang: jPulang,
                         status: st,
+                        keterangan_lokasi: ketLok,
                         foto_masuk: r.fotoMasuk || r.foto_masuk || '',
                         foto_pulang: r.fotoPulang || r.foto_pulang || ''
                     };
@@ -4629,7 +4920,10 @@ service cloud.firestore {
                             <td class="font-medium p-3 text-gray-800">${item.nama}</td>
                             <td class="text-center p-3 text-gray-600">${item.jam_masuk}</td>
                             <td class="text-center p-3 text-gray-600">${item.jam_pulang}</td>
-                            <td class="text-center p-3"><span class="${badgeClass} text-[10px] px-2 py-1 rounded-full font-bold uppercase tracking-wider">${item.status || 'Alpa'}</span></td>
+                            <td class="text-center p-3">
+                                <span class="${badgeClass} text-[10px] px-2 py-1 rounded-full font-bold uppercase tracking-wider">${item.status || 'Alpa'}</span>
+                                ${item.keterangan_lokasi ? `<div class="text-[10px] text-gray-500 font-medium mt-0.5">${item.keterangan_lokasi}</div>` : ''}
+                            </td>
                             <td class="text-center p-3">
                                 ${(item.foto_masuk && item.foto_masuk !== '#' && item.foto_masuk !== '') || (item.foto_pulang && item.foto_pulang !== '#' && item.foto_pulang !== '') ? 
                                     `<button onclick="app.lihatFotoPresensi('${item.foto_masuk || item.foto_pulang}')" class="text-blue-500 hover:text-blue-700 font-medium text-xs flex items-center justify-center gap-1 w-full"><span class="material-icons-round text-[18px]">image</span> Foto</button>` : 
@@ -4702,6 +4996,7 @@ service cloud.firestore {
                     jMasuk = shiftCfg.masuk || '07:30';
                 }
             }
+            const ketLokAdmin = r.lokasiMasuk || r.lokasiPulang || r.keteranganLokasi || (r.lokasiTerdeteksi ? `Lokasi GPS ${r.lokasiTerdeteksi}` : '');
             return {
                 tanggal: r.tanggal,
                 nip: nip,
@@ -4709,6 +5004,7 @@ service cloud.firestore {
                 jam_masuk: jMasuk,
                 jam_pulang: jPulang,
                 status: st,
+                keterangan_lokasi: ketLokAdmin,
                 foto_masuk: r.fotoMasuk || r.foto_masuk || '',
                 foto_pulang: r.fotoPulang || r.foto_pulang || ''
             };
@@ -5973,26 +6269,71 @@ service cloud.firestore {
 
     renderPengaturanLokasi() {
         const d = this.mockData.lokasiDanJamKerja || {};
+        
+        // --- LOKASI GPS 1 ---
         const namaEl = document.getElementById('pengaturan-nama-lokasi');
         if (!namaEl) return;
 
-        if (d.namaLokasi !== undefined) namaEl.value = d.namaLokasi;
+        if (d.namaLokasi !== undefined || d.namaLokasi1 !== undefined) {
+            namaEl.value = d.namaLokasi || d.namaLokasi1 || 'SDN 1 Natar (Lokasi 1)';
+        }
         const alamatEl = document.getElementById('pengaturan-alamat-lokasi');
-        if (alamatEl && d.alamatLokasi !== undefined) alamatEl.value = d.alamatLokasi;
+        if (alamatEl && (d.alamatLokasi !== undefined || d.alamatLokasi1 !== undefined)) {
+            alamatEl.value = d.alamatLokasi || d.alamatLokasi1 || '';
+        }
         
         const latEl = document.getElementById('pengaturan-lat');
-        if (latEl && d.lat !== undefined) latEl.value = d.lat;
+        if (latEl && (d.lat !== undefined || d.lat1 !== undefined)) {
+            latEl.value = d.lat !== undefined ? d.lat : d.lat1;
+        }
         
         const lngEl = document.getElementById('pengaturan-lng');
-        if (lngEl && d.lng !== undefined) lngEl.value = d.lng;
-
-        const radEl = document.getElementById('pengaturan-radius');
-        if (radEl && d.radius !== undefined) {
-            radEl.value = d.radius;
-            const badge = document.getElementById('map-radius-badge');
-            if (badge) badge.innerText = `Radius ${d.radius}m`;
+        if (lngEl && (d.lng !== undefined || d.lng1 !== undefined)) {
+            lngEl.value = d.lng !== undefined ? d.lng : d.lng1;
         }
 
+        const radEl = document.getElementById('pengaturan-radius');
+        if (radEl && (d.radius !== undefined || d.radius1 !== undefined)) {
+            radEl.value = d.radius !== undefined ? d.radius : (d.radius1 || 100);
+            const badge1 = document.getElementById('map-radius-badge-1') || document.getElementById('map-radius-badge');
+            if (badge1) badge1.innerText = `Radius 1: ${radEl.value}m`;
+        }
+
+        // --- LOKASI GPS 2 ---
+        const lk2 = d.lokasi2 || {};
+        const toggle2 = document.getElementById('pengaturan-lokasi-2-aktif');
+        if (toggle2) {
+            toggle2.checked = (lk2.aktif !== undefined) ? !!lk2.aktif : (d.aktif2 !== undefined ? !!d.aktif2 : true);
+        }
+
+        const namaEl2 = document.getElementById('pengaturan-nama-lokasi-2');
+        if (namaEl2) {
+            namaEl2.value = lk2.namaLokasi || d.namaLokasi2 || 'SDN 1 Natar (Lokasi 2 / Kampus B)';
+        }
+        const alamatEl2 = document.getElementById('pengaturan-alamat-lokasi-2');
+        if (alamatEl2) {
+            alamatEl2.value = lk2.alamatLokasi !== undefined ? lk2.alamatLokasi : (d.alamatLokasi2 || '');
+        }
+
+        const latEl2 = document.getElementById('pengaturan-lat-2');
+        if (latEl2) {
+            latEl2.value = lk2.lat !== undefined ? lk2.lat : (d.lat2 !== undefined ? d.lat2 : -5.259100);
+        }
+        const lngEl2 = document.getElementById('pengaturan-lng-2');
+        if (lngEl2) {
+            lngEl2.value = lk2.lng !== undefined ? lk2.lng : (d.lng2 !== undefined ? d.lng2 : 105.185200);
+        }
+
+        const radEl2 = document.getElementById('pengaturan-radius-2');
+        if (radEl2) {
+            radEl2.value = lk2.radius !== undefined ? lk2.radius : (d.radius2 !== undefined ? d.radius2 : 100);
+            const badge2 = document.getElementById('map-radius-badge-2');
+            if (badge2) badge2.innerText = `Radius 2: ${radEl2.value}m`;
+        }
+
+        this.toggleLokasi2Aktif();
+
+        // --- PENGATURAN JAM KERJA ---
         const jk = d.jamKerja || {};
         const pagi = jk.pagi || {};
         const siang = jk.siang || {};
@@ -6019,8 +6360,73 @@ service cloud.firestore {
         setVal('pengaturan-toleransi', jk.toleransi, 15);
 
         this.updateSimulasiJam();
-        this.updateMapDariInput();
-        this.updateRadiusCircle();
+        this.updateMapDariInput(1);
+        this.updateMapDariInput(2);
+        this.updateRadiusCircle(1);
+        this.updateRadiusCircle(2);
+    },
+
+    toggleLokasi2Aktif() {
+        const chk = document.getElementById('pengaturan-lokasi-2-aktif');
+        const isAktif = chk ? chk.checked : true;
+        const box = document.getElementById('container-lokasi-2');
+        if (box) {
+            if (isAktif) {
+                box.classList.remove('opacity-40', 'pointer-events-none');
+            } else {
+                box.classList.add('opacity-40', 'pointer-events-none');
+            }
+        }
+        if (this.lokasiMarker2 && this.lokasiCircle2 && this.lokasiMap) {
+            if (isAktif) {
+                if (!this.lokasiMap.hasLayer(this.lokasiMarker2)) this.lokasiMarker2.addTo(this.lokasiMap);
+                if (!this.lokasiMap.hasLayer(this.lokasiCircle2)) this.lokasiCircle2.addTo(this.lokasiMap);
+            } else {
+                if (this.lokasiMap.hasLayer(this.lokasiMarker2)) this.lokasiMap.removeLayer(this.lokasiMarker2);
+                if (this.lokasiMap.hasLayer(this.lokasiCircle2)) this.lokasiMap.removeLayer(this.lokasiCircle2);
+            }
+        }
+    },
+
+    fokusLokasiMap(idx = 1) {
+        if (!this.lokasiMap) return;
+        const parseNum = (val, def) => {
+            if (typeof val === 'string') val = val.replace(',', '.').trim();
+            const n = parseFloat(val);
+            return isNaN(n) ? def : n;
+        };
+        if (idx === 2) {
+            const lat2 = parseNum(document.getElementById('pengaturan-lat-2')?.value, -5.259100);
+            const lng2 = parseNum(document.getElementById('pengaturan-lng-2')?.value, 105.185200);
+            this.lokasiMap.setView([lat2, lng2], 16);
+            if (this.lokasiMarker2) this.lokasiMarker2.openPopup();
+        } else {
+            const lat1 = parseNum(document.getElementById('pengaturan-lat')?.value, -5.257321);
+            const lng1 = parseNum(document.getElementById('pengaturan-lng')?.value, 105.183421);
+            this.lokasiMap.setView([lat1, lng1], 16);
+            if (this.lokasiMarker) this.lokasiMarker.openPopup();
+        }
+    },
+
+    fokusSemuaLokasiMap() {
+        if (!this.lokasiMap) return;
+        const parseNum = (val, def) => {
+            if (typeof val === 'string') val = val.replace(',', '.').trim();
+            const n = parseFloat(val);
+            return isNaN(n) ? def : n;
+        };
+        const lat1 = parseNum(document.getElementById('pengaturan-lat')?.value, -5.257321);
+        const lng1 = parseNum(document.getElementById('pengaturan-lng')?.value, 105.183421);
+        const lat2 = parseNum(document.getElementById('pengaturan-lat-2')?.value, -5.259100);
+        const lng2 = parseNum(document.getElementById('pengaturan-lng-2')?.value, 105.185200);
+        const isAktif2 = document.getElementById('pengaturan-lokasi-2-aktif')?.checked;
+
+        if (isAktif2 && typeof L !== 'undefined' && L.latLngBounds) {
+            const bounds = L.latLngBounds([[lat1, lng1], [lat2, lng2]]);
+            this.lokasiMap.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 });
+        } else {
+            this.lokasiMap.setView([lat1, lng1], 16);
+        }
     },
 
     initLokasiMap() {
@@ -6031,9 +6437,16 @@ service cloud.firestore {
         };
 
         const d = this.mockData.lokasiDanJamKerja || {};
-        const latInput = parseNum(document.getElementById('pengaturan-lat')?.value, parseNum(d.lat, -5.257321));
-        const lngInput = parseNum(document.getElementById('pengaturan-lng')?.value, parseNum(d.lng, 105.183421));
-        const radiusInput = parseInt(document.getElementById('pengaturan-radius')?.value) || parseInt(d.radius) || 100;
+        const lk2 = d.lokasi2 || {};
+
+        const latInput = parseNum(document.getElementById('pengaturan-lat')?.value, parseNum(d.lat !== undefined ? d.lat : d.lat1, -5.257321));
+        const lngInput = parseNum(document.getElementById('pengaturan-lng')?.value, parseNum(d.lng !== undefined ? d.lng : d.lng1, 105.183421));
+        const radiusInput = parseInt(document.getElementById('pengaturan-radius')?.value) || parseInt(d.radius !== undefined ? d.radius : d.radius1) || 100;
+
+        const latInput2 = parseNum(document.getElementById('pengaturan-lat-2')?.value, parseNum(lk2.lat !== undefined ? lk2.lat : d.lat2, -5.259100));
+        const lngInput2 = parseNum(document.getElementById('pengaturan-lng-2')?.value, parseNum(lk2.lng !== undefined ? lk2.lng : d.lng2, 105.185200));
+        const radiusInput2 = parseInt(document.getElementById('pengaturan-radius-2')?.value) || parseInt(lk2.radius !== undefined ? lk2.radius : d.radius2) || 100;
+        const isAktif2 = document.getElementById('pengaturan-lokasi-2-aktif') ? document.getElementById('pengaturan-lokasi-2-aktif').checked : ((lk2.aktif !== undefined) ? !!lk2.aktif : true);
 
         if (!this.lokasiMap) {
             // Tunggu elemen muncul di DOM (transition animation)
@@ -6041,61 +6454,123 @@ service cloud.firestore {
                 const mapEl = document.getElementById('admin-leaflet-map');
                 if(!mapEl) return;
 
-                this.lokasiMap = L.map('admin-leaflet-map').setView([latInput, lngInput], 16);
-                L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
-                    maxZoom: 19,
+                this.lokasiMap = L.map('admin-leaflet-map').setView([latInput, lngInput], 15);
+                const googleTile = L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', {
+                    maxZoom: 20,
                     attribution: '© Google Maps'
-                }).addTo(this.lokasiMap);
+                });
+                googleTile.on('tileerror', function(error, tile) {
+                    const z = error.coords.z, x = error.coords.x, y = error.coords.y;
+                    tile.src = 'https://a.basemaps.cartocdn.com/rastertiles/voyager/' + z + '/' + x + '/' + y + '.png';
+                });
+                googleTile.addTo(this.lokasiMap);
 
+                // --- LOKASI 1 (Hijau) ---
                 this.lokasiCircle = L.circle([latInput, lngInput], {
                     color: '#15803d',
-                    fillColor: '#15803d',
+                    fillColor: '#16a34a',
                     fillOpacity: 0.2,
                     radius: radiusInput
                 }).addTo(this.lokasiMap);
 
-                this.lokasiMarker = L.marker([latInput, lngInput], { draggable: true }).addTo(this.lokasiMap);
+                const icon1 = L.divIcon({
+                    className: 'custom-pin-lok1',
+                    html: `<div style="background-color:#16a34a; color:#fff; font-weight:700; font-size:11px; padding:3px 8px; border-radius:12px; box-shadow:0 2px 6px rgba(0,0,0,0.3); border:2px solid #fff; display:flex; align-items:center; gap:3px; white-space:nowrap;"><span class="material-icons-round" style="font-size:14px;">location_on</span> Lokasi 1</div>`,
+                    iconSize: [80, 26],
+                    iconAnchor: [40, 26]
+                });
+                this.lokasiMarker = L.marker([latInput, lngInput], { draggable: true, icon: icon1 }).addTo(this.lokasiMap);
+                this.lokasiMarker.bindPopup('<b>Lokasi GPS 1 (Utama)</b><br>Geser untuk pindah titik');
                 
                 this.lokasiMarker.on('dragend', (e) => {
                     const pos = e.target.getLatLng();
-                    document.getElementById('pengaturan-lat').value = pos.lat.toFixed(6);
-                    document.getElementById('pengaturan-lng').value = pos.lng.toFixed(6);
-                    this.lokasiCircle.setLatLng(pos);
-                    this.dapatkanAlamat(pos.lat, pos.lng);
+                    const latEl = document.getElementById('pengaturan-lat');
+                    const lngEl = document.getElementById('pengaturan-lng');
+                    if (latEl) latEl.value = pos.lat.toFixed(6);
+                    if (lngEl) lngEl.value = pos.lng.toFixed(6);
+                    if (this.lokasiCircle) this.lokasiCircle.setLatLng(pos);
+                    this.dapatkanAlamat(pos.lat, pos.lng, 1);
                 });
+
+                // --- LOKASI 2 (Oranye) ---
+                this.lokasiCircle2 = L.circle([latInput2, lngInput2], {
+                    color: '#c2410c',
+                    fillColor: '#ea580c',
+                    fillOpacity: 0.2,
+                    radius: radiusInput2
+                });
+
+                const icon2 = L.divIcon({
+                    className: 'custom-pin-lok2',
+                    html: `<div style="background-color:#ea580c; color:#fff; font-weight:700; font-size:11px; padding:3px 8px; border-radius:12px; box-shadow:0 2px 6px rgba(0,0,0,0.3); border:2px solid #fff; display:flex; align-items:center; gap:3px; white-space:nowrap;"><span class="material-icons-round" style="font-size:14px;">location_on</span> Lokasi 2</div>`,
+                    iconSize: [80, 26],
+                    iconAnchor: [40, 26]
+                });
+                this.lokasiMarker2 = L.marker([latInput2, lngInput2], { draggable: true, icon: icon2 });
+                this.lokasiMarker2.bindPopup('<b>Lokasi GPS 2 (Sekolah Berbeda / Kampus B)</b><br>Geser untuk pindah titik');
+
+                this.lokasiMarker2.on('dragend', (e) => {
+                    const pos = e.target.getLatLng();
+                    const latEl2 = document.getElementById('pengaturan-lat-2');
+                    const lngEl2 = document.getElementById('pengaturan-lng-2');
+                    if (latEl2) latEl2.value = pos.lat.toFixed(6);
+                    if (lngEl2) lngEl2.value = pos.lng.toFixed(6);
+                    if (this.lokasiCircle2) this.lokasiCircle2.setLatLng(pos);
+                    this.dapatkanAlamat(pos.lat, pos.lng, 2);
+                });
+
+                if (isAktif2) {
+                    this.lokasiCircle2.addTo(this.lokasiMap);
+                    this.lokasiMarker2.addTo(this.lokasiMap);
+                }
+
+                this.fokusSemuaLokasiMap();
             }, 300);
         } else {
             setTimeout(() => {
                 this.lokasiMap.invalidateSize();
-                this.updateMapDariInput();
-                this.updateRadiusCircle();
+                this.updateMapDariInput(1);
+                this.updateMapDariInput(2);
+                this.updateRadiusCircle(1);
+                this.updateRadiusCircle(2);
             }, 300);
         }
     },
 
-    async dapatkanAlamat(lat, lng) {
+    async dapatkanAlamat(lat, lng, targetIndex = 1) {
+        const elId = targetIndex === 2 ? 'pengaturan-alamat-lokasi-2' : 'pengaturan-alamat-lokasi';
+        const el = document.getElementById(elId);
+        if (!el) return;
         try {
-            document.getElementById('pengaturan-alamat-lokasi').value = 'Mengambil alamat...';
-            // Menambahkan User-Agent header secara implisit dengan fetch atau URL unik
+            el.value = 'Mengambil alamat...';
             const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`);
             const data = await response.json();
             if(data && data.display_name) {
-                document.getElementById('pengaturan-alamat-lokasi').value = data.display_name;
+                el.value = data.display_name;
             } else {
-                document.getElementById('pengaturan-alamat-lokasi').value = 'Alamat tidak ditemukan';
+                el.value = 'Alamat tidak ditemukan';
             }
         } catch(e) {
-            document.getElementById('pengaturan-alamat-lokasi').value = 'Gagal mengambil alamat otomatis';
+            el.value = 'Gagal mengambil alamat otomatis';
         }
     },
 
-    updateMapDariInput() {
-        if(this.lokasiMap) {
-            const parseNum = (val, def) => {
-                if (typeof val === 'string') val = val.replace(',', '.').trim();
-                const n = parseFloat(val);
-                return isNaN(n) ? def : n;
-            };
+    updateMapDariInput(idx = 1) {
+        if(!this.lokasiMap) return;
+        const parseNum = (val, def) => {
+            if (typeof val === 'string') val = val.replace(',', '.').trim();
+            const n = parseFloat(val);
+            return isNaN(n) ? def : n;
+        };
+
+        if (idx === 2) {
+            const latInput2 = parseNum(document.getElementById('pengaturan-lat-2')?.value, -5.259100);
+            const lngInput2 = parseNum(document.getElementById('pengaturan-lng-2')?.value, 105.185200);
+            const pos2 = [latInput2, lngInput2];
+            if (this.lokasiMarker2) this.lokasiMarker2.setLatLng(pos2);
+            if (this.lokasiCircle2) this.lokasiCircle2.setLatLng(pos2);
+            this.lokasiMap.panTo(pos2);
+        } else {
             const latInput = parseNum(document.getElementById('pengaturan-lat')?.value, -5.257321);
             const lngInput = parseNum(document.getElementById('pengaturan-lng')?.value, 105.183421);
             const pos = [latInput, lngInput];
@@ -6105,35 +6580,55 @@ service cloud.firestore {
         }
     },
 
-    updateRadiusCircle() {
-        if(this.lokasiCircle) {
-            const radius = parseInt(document.getElementById('pengaturan-radius').value) || 100;
-            this.lokasiCircle.setRadius(radius);
-            document.getElementById('map-radius-badge').innerText = `Radius ${radius}m`;
+    updateRadiusCircle(idx = 1) {
+        if (idx === 2) {
+            if (this.lokasiCircle2) {
+                const radius2 = parseInt(document.getElementById('pengaturan-radius-2')?.value) || 100;
+                this.lokasiCircle2.setRadius(radius2);
+                const b2 = document.getElementById('map-radius-badge-2');
+                if (b2) b2.innerText = `Radius 2: ${radius2}m`;
+            }
+        } else {
+            if (this.lokasiCircle) {
+                const radius = parseInt(document.getElementById('pengaturan-radius')?.value) || 100;
+                this.lokasiCircle.setRadius(radius);
+                const b1 = document.getElementById('map-radius-badge-1') || document.getElementById('map-radius-badge');
+                if (b1) b1.innerText = `Radius 1: ${radius}m`;
+            }
         }
     },
 
-    gunakanLokasiSekarang() {
+    gunakanLokasiSekarang(targetIndex = 1) {
+        const idx = (targetIndex === 2) ? 2 : 1;
+        const latElId = idx === 2 ? 'pengaturan-lat-2' : 'pengaturan-lat';
+        const lngElId = idx === 2 ? 'pengaturan-lng-2' : 'pengaturan-lng';
+        const infoElId = idx === 2 ? 'pengaturan-akurasi-info-2' : 'pengaturan-akurasi-info';
+
         if ("geolocation" in navigator) {
-            this.showToast('Meminta akses lokasi...', 'location_searching', 'text-blue-400');
+            this.showToast(`Meminta akses lokasi GPS ${idx}...`, 'location_searching', 'text-blue-400');
             navigator.geolocation.getCurrentPosition(
                 (pos) => {
                     const lat = pos.coords.latitude;
                     const lng = pos.coords.longitude;
                     const acc = pos.coords.accuracy;
                     
-                    document.getElementById('pengaturan-lat').value = lat.toFixed(6);
-                    document.getElementById('pengaturan-lng').value = lng.toFixed(6);
+                    const latEl = document.getElementById(latElId);
+                    const lngEl = document.getElementById(lngElId);
+                    if (latEl) latEl.value = lat.toFixed(6);
+                    if (lngEl) lngEl.value = lng.toFixed(6);
                     
-                    document.getElementById('pengaturan-akurasi-info').innerText = `Akurasi: ±${Math.round(acc)} meter`;
-                    document.getElementById('pengaturan-akurasi-info').classList.remove('hidden');
+                    const infoEl = document.getElementById(infoElId);
+                    if (infoEl) {
+                        infoEl.innerText = `Akurasi GPS: ±${Math.round(acc)} meter`;
+                        infoEl.classList.remove('hidden');
+                    }
                     
-                    this.updateMapDariInput();
-                    this.dapatkanAlamat(lat, lng);
-                    this.showToast('Lokasi berhasil ditemukan', 'check_circle', 'text-green-400');
+                    this.updateMapDariInput(idx);
+                    this.dapatkanAlamat(lat, lng, idx);
+                    this.showToast(`Titik GPS Lokasi ${idx} berhasil didapatkan!`, 'check_circle', 'text-green-400');
                 },
                 (err) => {
-                    let msg = 'Gagal mendapatkan lokasi.';
+                    let msg = 'Gagal mendapatkan lokasi GPS.';
                     if (err.code === 1) msg = 'Akses lokasi ditolak oleh browser.';
                     else if (err.code === 3) msg = 'Waktu pencarian lokasi habis.';
                     this.showToast(msg, 'error', 'text-red-400');
@@ -6182,21 +6677,35 @@ service cloud.firestore {
                 return parseFloat(val);
             };
 
-            const radius = parseInt(document.getElementById('pengaturan-radius').value);
-            if (!radius || radius <= 0) {
+            // Validasi Lokasi 1
+            const radius1 = parseInt(document.getElementById('pengaturan-radius').value);
+            if (!radius1 || radius1 <= 0) {
                 if (btn) { btn.innerHTML = oHtml; btn.disabled = false; }
-                return this.showToast('Radius presensi harus lebih dari 0', 'error', 'text-red-400');
+                return this.showToast('Radius presensi Lokasi 1 harus lebih dari 0', 'error', 'text-red-400');
             }
             
-            const lat = parseNum(document.getElementById('pengaturan-lat').value);
-            const lng = parseNum(document.getElementById('pengaturan-lng').value);
-            if (isNaN(lat) || isNaN(lng)) {
+            const lat1 = parseNum(document.getElementById('pengaturan-lat').value);
+            const lng1 = parseNum(document.getElementById('pengaturan-lng').value);
+            if (isNaN(lat1) || isNaN(lng1)) {
                 if (btn) { btn.innerHTML = oHtml; btn.disabled = false; }
-                return this.showToast('Latitude dan Longitude tidak valid', 'error', 'text-red-400');
+                return this.showToast('Latitude dan Longitude Lokasi 1 tidak valid', 'error', 'text-red-400');
             }
 
-            const namaLokasi = (document.getElementById('pengaturan-nama-lokasi')?.value || '').trim() || 'SDN 1 Natar';
-            const alamatLokasi = (document.getElementById('pengaturan-alamat-lokasi')?.value || '').trim();
+            const namaLokasi1 = (document.getElementById('pengaturan-nama-lokasi')?.value || '').trim() || 'SDN 1 Natar (Lokasi 1)';
+            const alamatLokasi1 = (document.getElementById('pengaturan-alamat-lokasi')?.value || '').trim();
+
+            // Validasi Lokasi 2
+            const aktifLokasi2 = document.getElementById('pengaturan-lokasi-2-aktif') ? document.getElementById('pengaturan-lokasi-2-aktif').checked : true;
+            let radius2 = parseInt(document.getElementById('pengaturan-radius-2')?.value) || 100;
+            let lat2 = parseNum(document.getElementById('pengaturan-lat-2')?.value);
+            let lng2 = parseNum(document.getElementById('pengaturan-lng-2')?.value);
+            if (isNaN(lat2) || isNaN(lng2)) {
+                lat2 = lat1;
+                lng2 = lng1;
+            }
+            const namaLokasi2 = (document.getElementById('pengaturan-nama-lokasi-2')?.value || '').trim() || 'SDN 1 Natar (Lokasi 2 / Kampus B)';
+            const alamatLokasi2 = (document.getElementById('pengaturan-alamat-lokasi-2')?.value || '').trim();
+
             const toleransi = parseInt(document.getElementById('pengaturan-toleransi')?.value) || 0;
 
             const jamKerja = {
@@ -6232,16 +6741,45 @@ service cloud.firestore {
             };
 
             const dataLokasi = {
-                namaLokasi,
-                alamatLokasi,
-                lat,
-                lng,
-                radius,
+                // Lokasi 1 (backward-compatible)
+                namaLokasi: namaLokasi1,
+                alamatLokasi: alamatLokasi1,
+                lat: lat1,
+                lng: lng1,
+                radius: radius1,
+
+                // Explicit Lokasi 1
+                lokasi1: {
+                    namaLokasi: namaLokasi1,
+                    alamatLokasi: alamatLokasi1,
+                    lat: lat1,
+                    lng: lng1,
+                    radius: radius1
+                },
+
+                // Explicit Lokasi 2
+                lokasi2: {
+                    aktif: aktifLokasi2,
+                    namaLokasi: namaLokasi2,
+                    alamatLokasi: alamatLokasi2,
+                    lat: lat2,
+                    lng: lng2,
+                    radius: radius2
+                },
+
+                // Flat keys for Lokasi 2
+                namaLokasi2: namaLokasi2,
+                alamatLokasi2: alamatLokasi2,
+                lat2: lat2,
+                lng2: lng2,
+                radius2: radius2,
+                aktif2: aktifLokasi2,
+
                 jamKerja
             };
 
             this.mockData.lokasiDanJamKerja = dataLokasi;
-            this.presensiState.LOKASI_SEKOLAH = { lat, lng, radius };
+            this.syncLokasiSekolahState(dataLokasi);
 
             // Simpan langsung ke LocalStorage
             localStorage.setItem(APP_STORAGE_KEY, JSON.stringify(this.mockData));
@@ -6254,12 +6792,14 @@ service cloud.firestore {
                 }, { merge: true }).catch(e => console.warn('Sync mainState lokasiDanJamKerja:', e));
             }
 
-            this.updateRadiusCircle();
-            this.updateMapDariInput();
+            this.updateRadiusCircle(1);
+            this.updateRadiusCircle(2);
+            this.updateMapDariInput(1);
+            this.updateMapDariInput(2);
             this.updateSimulasiJam();
 
             if (btn) { btn.innerHTML = oHtml; btn.disabled = false; }
-            this.showToast('Pengaturan lokasi & jam kerja berhasil disimpan.', 'check_circle', 'text-green-400');
+            this.showToast('Pengaturan Multi-Lokasi GPS & Jam Kerja berhasil disimpan.', 'check_circle', 'text-green-400');
         } catch (err) {
             console.error('Gagal simpan lokasi & jam kerja:', err);
             if (btn) { btn.innerHTML = oHtml; btn.disabled = false; }
@@ -8846,15 +9386,27 @@ service cloud.firestore {
             </div>
         `},
         adminLokasi: function() {
-            const lk = (typeof app !== 'undefined' && app.mockData && app.mockData.lokasiDanJamKerja) ? app.mockData.lokasiDanJamKerja : {};
+            const lk = (typeof app !== 'undefined' && app.mockData && app.mockData.lokasiDanJamKerja) ? app.mockData.lokasiDanJamKerja : (this.mockData ? this.mockData.lokasiDanJamKerja : {});
             const jk = lk.jamKerja || {};
             const pagi = jk.pagi || {};
             const siang = jk.siang || {};
-            const namaLokasi = lk.namaLokasi || 'SDN 1 Natar';
-            const alamatLokasi = lk.alamatLokasi !== undefined ? lk.alamatLokasi : 'SDN 1 Natar, Lampung Selatan';
-            const lat = lk.lat !== undefined ? lk.lat : -5.257321;
-            const lng = lk.lng !== undefined ? lk.lng : 105.183421;
-            const radius = lk.radius !== undefined ? lk.radius : 100;
+
+            // Data Lokasi 1 (Utama)
+            const namaLokasi = lk.namaLokasi || lk.namaLokasi1 || 'SDN 1 Natar (Lokasi 1)';
+            const alamatLokasi = lk.alamatLokasi !== undefined ? lk.alamatLokasi : (lk.alamatLokasi1 !== undefined ? lk.alamatLokasi1 : 'SDN 1 Natar, Lampung Selatan');
+            const lat = lk.lat !== undefined ? lk.lat : (lk.lat1 !== undefined ? lk.lat1 : -5.257321);
+            const lng = lk.lng !== undefined ? lk.lng : (lk.lng1 !== undefined ? lk.lng1 : 105.183421);
+            const radius = lk.radius !== undefined ? lk.radius : (lk.radius1 !== undefined ? lk.radius1 : 100);
+
+            // Data Lokasi 2 (Sekolah Berbeda / Kampus B)
+            const lk2 = lk.lokasi2 || {};
+            const aktif2 = (lk2.aktif !== undefined) ? !!lk2.aktif : (lk.aktif2 !== undefined ? !!lk.aktif2 : true);
+            const namaLokasi2 = lk2.namaLokasi || lk.namaLokasi2 || 'SDN 1 Natar (Lokasi 2 / Kampus B)';
+            const alamatLokasi2 = lk2.alamatLokasi !== undefined ? lk2.alamatLokasi : (lk.alamatLokasi2 !== undefined ? lk.alamatLokasi2 : 'SDN 1 Natar Gedung 2, Lampung Selatan');
+            const lat2 = lk2.lat !== undefined ? lk2.lat : (lk.lat2 !== undefined ? lk.lat2 : -5.259100);
+            const lng2 = lk2.lng !== undefined ? lk2.lng : (lk.lng2 !== undefined ? lk.lng2 : 105.185200);
+            const radius2 = lk2.radius !== undefined ? lk2.radius : (lk.radius2 !== undefined ? lk.radius2 : 100);
+
             const toleransi = jk.toleransi !== undefined ? jk.toleransi : 15;
 
             const pagiSKM = pagi.seninKamis?.masuk || '07:30';
@@ -8875,64 +9427,128 @@ service cloud.firestore {
             <div id="screen-admin-lokasi" class="screen h-full w-full bg-gray-50 flex-row hidden">
                 ${this.adminSidebar()}
                 <div class="flex-1 flex flex-col min-w-0">
-                    ${this.adminTopbar('Pengaturan Lokasi & Jam Kerja')}
+                    ${this.adminTopbar('Pengaturan Lokasi Multi-GPS & Jam Kerja')}
                     <div class="p-6 flex-1 overflow-y-auto">
                         <div class="max-w-6xl mx-auto space-y-6">
                             
                             <!-- Header Info -->
                             <div class="bg-primary/10 border border-primary/20 rounded-xl p-4 flex gap-4 items-start">
                                 <div class="p-2 bg-primary/20 rounded-lg shrink-0">
-                                    <span class="material-icons-round text-primary">info</span>
+                                    <span class="material-icons-round text-primary">add_location_alt</span>
                                 </div>
                                 <div>
-                                    <h4 class="font-bold text-gray-800">Atur lokasi presensi, radius kehadiran, serta jam kerja guru.</h4>
-                                    <p class="text-sm text-gray-600 mt-1">Guru hanya dapat melakukan presensi normal jika berada dalam radius yang telah ditentukan dari titik lokasi sekolah. Guru yang melakukan presensi di luar radius atau terlambat akan dimintai alasan presensi.</p>
+                                    <h4 class="font-bold text-gray-800">Atur Titik Lokasi Presensi Multi-GPS (Sekolah dengan Lokasi Berbeda) & Jam Kerja</h4>
+                                    <p class="text-sm text-gray-600 mt-1">Guru dapat melakukan presensi di <b>Lokasi GPS 1</b> maupun <b>Lokasi GPS 2</b>. Selama berada dalam radius salah satu titik lokasi sekolah yang diatur admin, guru akan <b>tetap diakui berada di lokasi</b> dengan keterangan titik GPS yang terdeteksi secara otomatis.</p>
                                 </div>
                             </div>
 
                             <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
                                 
-                                <!-- Kiri: Form -->
+                                <!-- Kiri: Form Multi-Lokasi & Jam Kerja -->
                                 <div class="space-y-6">
                                     
-                                    <!-- Card: Lokasi Presensi -->
-                                    <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-                                        <div class="px-5 py-4 border-b border-gray-100 bg-gray-50">
-                                            <h3 class="font-bold text-gray-800 flex items-center gap-2"><span class="material-icons-round text-primary">location_on</span> Lokasi Presensi Sekolah</h3>
+                                    <!-- Card: Lokasi GPS 1 (Utama) -->
+                                    <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden border-l-4 border-l-green-600">
+                                        <div class="px-5 py-3.5 border-b border-gray-100 bg-green-50/50 flex justify-between items-center">
+                                            <h3 class="font-bold text-gray-800 flex items-center gap-2 text-sm">
+                                                <span class="w-3 h-3 rounded-full bg-green-600"></span> 
+                                                <span>Titik Lokasi GPS 1 (Utama)</span>
+                                            </h3>
+                                            <span class="text-[11px] bg-green-100 text-green-800 font-bold px-2.5 py-0.5 rounded-full">Lokasi 1</span>
                                         </div>
                                         <div class="p-5 space-y-4">
                                             <div>
-                                                <label class="block text-xs font-semibold text-gray-700 mb-1">Nama Lokasi</label>
-                                                <input type="text" id="pengaturan-nama-lokasi" value="${namaLokasi}" class="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none">
+                                                <label class="block text-xs font-semibold text-gray-700 mb-1">Nama Lokasi 1</label>
+                                                <input type="text" id="pengaturan-nama-lokasi" value="${namaLokasi}" placeholder="Misal: SDN 1 Natar (Gedung Utama)" class="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none">
                                             </div>
                                             <div>
-                                                <label class="block text-xs font-semibold text-gray-700 mb-1">Alamat Lengkap</label>
-                                                <textarea id="pengaturan-alamat-lokasi" rows="2" class="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none resize-none">${alamatLokasi}</textarea>
+                                                <label class="block text-xs font-semibold text-gray-700 mb-1">Alamat Lengkap Lokasi 1</label>
+                                                <textarea id="pengaturan-alamat-lokasi" rows="2" placeholder="Alamat lengkap lokasi 1..." class="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none resize-none">${alamatLokasi}</textarea>
                                             </div>
                                             
                                             <div class="grid grid-cols-2 gap-4">
                                                 <div>
-                                                    <label class="block text-xs font-semibold text-gray-700 mb-1">Latitude</label>
-                                                    <input type="number" step="any" id="pengaturan-lat" value="${lat}" class="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none bg-gray-50" onchange="app.updateMapDariInput()">
+                                                    <label class="block text-xs font-semibold text-gray-700 mb-1">Latitude 1</label>
+                                                    <input type="number" step="any" id="pengaturan-lat" value="${lat}" class="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none bg-gray-50" onchange="app.updateMapDariInput(1)">
                                                 </div>
                                                 <div>
-                                                    <label class="block text-xs font-semibold text-gray-700 mb-1">Longitude</label>
-                                                    <input type="number" step="any" id="pengaturan-lng" value="${lng}" class="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none bg-gray-50" onchange="app.updateMapDariInput()">
+                                                    <label class="block text-xs font-semibold text-gray-700 mb-1">Longitude 1</label>
+                                                    <input type="number" step="any" id="pengaturan-lng" value="${lng}" class="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none bg-gray-50" onchange="app.updateMapDariInput(1)">
                                                 </div>
                                             </div>
 
                                             <div>
-                                                <label class="block text-xs font-semibold text-gray-700 mb-1">Radius Presensi (meter)</label>
+                                                <label class="block text-xs font-semibold text-gray-700 mb-1">Radius Presensi Lokasi 1 (meter)</label>
                                                 <div class="flex items-center gap-3">
-                                                    <input type="number" id="pengaturan-radius" value="${radius}" min="10" oninput="app.updateRadiusCircle()" class="w-32 border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none">
+                                                    <input type="number" id="pengaturan-radius" value="${radius}" min="10" oninput="app.updateRadiusCircle(1)" class="w-32 border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-primary focus:border-primary outline-none">
                                                     <span class="text-sm text-gray-500 font-medium">meter</span>
                                                 </div>
                                             </div>
                                             
-                                            <button onclick="app.gunakanLokasiSekarang()" class="w-full bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200 font-medium py-2.5 rounded-lg transition flex items-center justify-center gap-2 text-sm mt-2">
-                                                <span class="material-icons-round text-[18px]">my_location</span> Gunakan Lokasi Sekarang
-                                            </button>
+                                            <div class="flex gap-2 pt-1">
+                                                <button type="button" onclick="app.gunakanLokasiSekarang(1)" class="flex-1 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 font-semibold py-2 rounded-lg transition flex items-center justify-center gap-1.5 text-xs">
+                                                    <span class="material-icons-round text-[16px]">my_location</span> Ambil Lokasi GPS 1 Sekarang
+                                                </button>
+                                                <button type="button" onclick="app.fokusLokasiMap(1)" class="px-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-medium flex items-center gap-1" title="Lihat Lokasi 1 di Peta">
+                                                    <span class="material-icons-round text-[16px]">center_focus_strong</span> Fokus
+                                                </button>
+                                            </div>
                                             <div id="pengaturan-akurasi-info" class="text-[11px] text-gray-500 text-center hidden mt-1"></div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Card: Lokasi GPS 2 (Sekolah Berbeda / Kampus B) -->
+                                    <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden border-l-4 border-l-orange-500">
+                                        <div class="px-5 py-3.5 border-b border-gray-100 bg-orange-50/50 flex justify-between items-center">
+                                            <h3 class="font-bold text-gray-800 flex items-center gap-2 text-sm">
+                                                <span class="w-3 h-3 rounded-full bg-orange-500"></span> 
+                                                <span>Titik Lokasi GPS 2 (Sekolah Berbeda / Kampus B)</span>
+                                            </h3>
+                                            <div class="flex items-center gap-2">
+                                                <label class="text-xs font-semibold text-gray-700 flex items-center gap-1.5 cursor-pointer">
+                                                    <input type="checkbox" id="pengaturan-lokasi-2-aktif" ${aktif2 ? 'checked' : ''} onchange="app.toggleLokasi2Aktif()" class="w-4 h-4 text-orange-600 rounded border-gray-300 focus:ring-orange-500">
+                                                    <span>Aktifkan</span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                        <div id="container-lokasi-2" class="p-5 space-y-4 transition-all duration-200">
+                                            <div>
+                                                <label class="block text-xs font-semibold text-gray-700 mb-1">Nama Lokasi 2</label>
+                                                <input type="text" id="pengaturan-nama-lokasi-2" value="${namaLokasi2}" placeholder="Misal: SDN 1 Natar (Kampus 2 / Gedung B)" class="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-orange-500 focus:border-orange-500 outline-none">
+                                            </div>
+                                            <div>
+                                                <label class="block text-xs font-semibold text-gray-700 mb-1">Alamat Lengkap Lokasi 2</label>
+                                                <textarea id="pengaturan-alamat-lokasi-2" rows="2" placeholder="Alamat lengkap lokasi 2..." class="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-orange-500 focus:border-orange-500 outline-none resize-none">${alamatLokasi2}</textarea>
+                                            </div>
+                                            
+                                            <div class="grid grid-cols-2 gap-4">
+                                                <div>
+                                                    <label class="block text-xs font-semibold text-gray-700 mb-1">Latitude 2</label>
+                                                    <input type="number" step="any" id="pengaturan-lat-2" value="${lat2}" class="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-orange-500 focus:border-orange-500 outline-none bg-gray-50" onchange="app.updateMapDariInput(2)">
+                                                </div>
+                                                <div>
+                                                    <label class="block text-xs font-semibold text-gray-700 mb-1">Longitude 2</label>
+                                                    <input type="number" step="any" id="pengaturan-lng-2" value="${lng2}" class="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-orange-500 focus:border-orange-500 outline-none bg-gray-50" onchange="app.updateMapDariInput(2)">
+                                                </div>
+                                            </div>
+
+                                            <div>
+                                                <label class="block text-xs font-semibold text-gray-700 mb-1">Radius Presensi Lokasi 2 (meter)</label>
+                                                <div class="flex items-center gap-3">
+                                                    <input type="number" id="pengaturan-radius-2" value="${radius2}" min="10" oninput="app.updateRadiusCircle(2)" class="w-32 border border-gray-300 rounded-lg p-2.5 text-sm focus:ring-1 focus:ring-orange-500 focus:border-orange-500 outline-none">
+                                                    <span class="text-sm text-gray-500 font-medium">meter</span>
+                                                </div>
+                                            </div>
+                                            
+                                            <div class="flex gap-2 pt-1">
+                                                <button type="button" onclick="app.gunakanLokasiSekarang(2)" class="flex-1 bg-orange-50 hover:bg-orange-100 text-orange-700 border border-orange-200 font-semibold py-2 rounded-lg transition flex items-center justify-center gap-1.5 text-xs">
+                                                    <span class="material-icons-round text-[16px]">my_location</span> Ambil Lokasi GPS 2 Sekarang
+                                                </button>
+                                                <button type="button" onclick="app.fokusLokasiMap(2)" class="px-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-medium flex items-center gap-1" title="Lihat Lokasi 2 di Peta">
+                                                    <span class="material-icons-round text-[16px]">center_focus_strong</span> Fokus
+                                                </button>
+                                            </div>
+                                            <div id="pengaturan-akurasi-info-2" class="text-[11px] text-gray-500 text-center hidden mt-1"></div>
                                         </div>
                                     </div>
 
@@ -9019,22 +9635,45 @@ service cloud.firestore {
 
                                 </div>
 
-                                <!-- Kanan: Map & Aksi -->
+                                <!-- Kanan: Map & Aksi Multi-GPS -->
                                 <div class="space-y-4 flex flex-col">
-                                    <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex-1 flex flex-col min-h-[400px]">
-                                        <div class="px-4 py-3 border-b border-gray-100 bg-gray-50 flex justify-between items-center shrink-0">
-                                            <h3 class="font-bold text-gray-800 text-sm">Peta Lokasi</h3>
-                                            <span class="text-xs bg-primary/10 text-primary-dark px-2 py-1 rounded font-semibold" id="map-radius-badge">Radius ${radius}m</span>
+                                    <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden flex-1 flex flex-col min-h-[460px]">
+                                        <div class="px-4 py-3 border-b border-gray-100 bg-gray-50 flex flex-wrap justify-between items-center shrink-0 gap-2">
+                                            <div class="flex items-center gap-2">
+                                                <h3 class="font-bold text-gray-800 text-sm">Peta Lokasi Multi-GPS</h3>
+                                            </div>
+                                            <div class="flex items-center gap-1.5 flex-wrap">
+                                                <span class="text-xs bg-green-100 text-green-800 px-2 py-1 rounded font-semibold border border-green-200" id="map-radius-badge-1">Radius 1: ${radius}m</span>
+                                                <span class="text-xs bg-orange-100 text-orange-800 px-2 py-1 rounded font-semibold border border-orange-200" id="map-radius-badge-2">Radius 2: ${radius2}m</span>
+                                            </div>
                                         </div>
+                                        
+                                        <!-- Quick Focus Toolbar -->
+                                        <div class="px-4 py-2 bg-gray-100/70 border-b border-gray-200 flex items-center justify-between text-xs">
+                                            <span class="text-gray-600 font-medium">Fokus Tampilan Peta:</span>
+                                            <div class="flex gap-1.5">
+                                                <button type="button" onclick="app.fokusLokasiMap(1)" class="px-2.5 py-1 bg-white hover:bg-green-50 text-green-700 border border-green-200 rounded font-semibold transition flex items-center gap-1 shadow-sm">
+                                                    <span class="w-2 h-2 rounded-full bg-green-600"></span> Lokasi 1
+                                                </button>
+                                                <button type="button" onclick="app.fokusLokasiMap(2)" class="px-2.5 py-1 bg-white hover:bg-orange-50 text-orange-700 border border-orange-200 rounded font-semibold transition flex items-center gap-1 shadow-sm">
+                                                    <span class="w-2 h-2 rounded-full bg-orange-500"></span> Lokasi 2
+                                                </button>
+                                                <button type="button" onclick="app.fokusSemuaLokasiMap()" class="px-2.5 py-1 bg-white hover:bg-blue-50 text-blue-700 border border-blue-200 rounded font-semibold transition flex items-center gap-1 shadow-sm">
+                                                    <span class="material-icons-round text-[13px]">zoom_out_map</span> Keduanya
+                                                </button>
+                                            </div>
+                                        </div>
+
                                         <!-- Container Map Leaflet -->
-                                        <div id="admin-leaflet-map" class="w-full flex-1 relative z-0"></div>
-                                        <div class="p-3 bg-blue-50 border-t border-blue-100 text-[11px] text-blue-700">
-                                            <span class="font-semibold">Tips:</span> Anda dapat menggeser (drag) pin marker merah pada peta untuk mengubah titik lokasi secara presisi.
+                                        <div id="admin-leaflet-map" class="w-full flex-1 relative z-0 min-h-[320px]"></div>
+                                        <div class="p-3 bg-blue-50 border-t border-blue-100 text-[11px] text-blue-700 flex items-start gap-1.5">
+                                            <span class="material-icons-round text-blue-600 text-[16px] shrink-0 mt-0.5">info</span>
+                                            <span><b>Tips Multi-GPS:</b> Pin <b>Hijau</b> = Lokasi 1 (Utama), Pin <b>Oranye</b> = Lokasi 2. Anda dapat menggeser (drag) pin marker pada peta untuk menentukan titik koordinat masing-masing lokasi secara presisi.</span>
                                         </div>
                                     </div>
 
                                     <button onclick="app.simpanPengaturanLokasi()" id="btn-simpan-pengaturan" class="w-full bg-primary hover:bg-primary-dark text-white font-bold py-3.5 px-6 rounded-xl transition shadow-md flex items-center justify-center gap-2 mt-auto">
-                                        <span class="material-icons-round text-[20px]">save</span> Simpan Pengaturan
+                                        <span class="material-icons-round text-[20px]">save</span> Simpan Pengaturan Multi-Lokasi & Jam Kerja
                                     </button>
                                 </div>
                             </div>
